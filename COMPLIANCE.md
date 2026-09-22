@@ -36,10 +36,10 @@ not currently consider new high-end PvM boss plugins.
 The source code:
 
 - is Java 11 and follows RuneLite's example-plugin project structure;
-- uses only RuneLite APIs, dependency injection and JUnit test dependencies from
-  the standard template;
-- does not use reflection, JNI, native code, subprocesses, executable downloads
-  or dynamically loaded external code;
+- uses RuneLite APIs and dependency injection at runtime, with JUnit and Mockito
+  for automated tests;
+- does not use reflection in production code, JNI, native code, subprocesses,
+  executable downloads or dynamically loaded external code;
 - performs no network requests and contains no third-party data client;
 - does not transmit account names, player names, combat results or learned
   timings;

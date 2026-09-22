@@ -109,7 +109,8 @@ final class NpcHealthRegenOverlay extends OverlayPanel
 			plugin.getTick(), plugin.getActiveRegenTicks());
 		if (window == null)
 		{
-			if (config.showTimeUntilFullHp() && currentHitpoints != null)
+			if (config.showTimeUntilFullHp() && currentHitpoints != null
+				&& plugin.getMaximumHitpoints() > 0)
 			{
 				boolean full = currentHitpoints.getMinimum() >= plugin.getMaximumHitpoints();
 				addLine("Full HP in", full ? "0.0s" : "Need first heal",

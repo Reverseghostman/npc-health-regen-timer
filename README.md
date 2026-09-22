@@ -83,6 +83,9 @@ calculate the time until full HP. Monster Inspect/Examine supplies the current
 Hitpoints and Defence shown by the game. The plugin retains the highest Defence
 it has inspected for that selected NPC type as a local reference.
 
+If RuneLite has no maximum HP data, recovery estimates remain unavailable;
+an inspection of current HP does not establish maximum HP.
+
 Respawn timing comes only from the configured fallback or a death-to-respawn
 measurement observed locally by the plugin. The plugin does not contact
 third-party sites or services.
@@ -131,8 +134,9 @@ information and scene displays can be enabled independently:
   the timer.
 - During four-tick splashing, a health change may become visible up to three
   ticks after the server-side heal. The plugin preserves that uncertainty for
-  the phase countdown while normalising 97-103-tick observations to the standard
-  configured 100-tick interval.
+  the phase countdown and retains the configured or learned interval when it
+  fits the observed window. Exact manual measurements and stored intervals are
+  not rounded to the default.
 - The plugin reacts when RuneLite exposes a health-ratio or inspection change.
   This is the earliest client-visible observation, but spell travel, interface
   updates and unavailable health bars can leave a window rather than one proven

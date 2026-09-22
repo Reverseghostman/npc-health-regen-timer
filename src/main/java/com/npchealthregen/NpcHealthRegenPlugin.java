@@ -21,6 +21,7 @@ import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.NpcDespawned;
 import net.runelite.api.events.NpcSpawned;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
@@ -58,6 +59,9 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 
 	@Inject
 	private Client client;
+
+	@Inject
+	private ClientThread clientThread;
 
 	@Inject
 	private NpcHealthRegenConfig config;
@@ -259,7 +263,6 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 
 		lastInspectedHitpoints = snapshot.getHitpoints();
 		lastInspectedDefence = snapshot.getDefence();
-		maximumHitpoints = Math.max(maximumHitpoints, lastInspectedHitpoints);
 		if (lastInspectedDefence >= 0)
 		{
 			baseDefence = Math.max(baseDefence, lastInspectedDefence);
@@ -277,17 +280,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	{
 		if (detectedInterval > 0 && config.learnNpcTimings())
 		{
-			int tolerance = Math.max(1, config.observationDelayTicks());
-			if (Math.abs(detectedInterval - config.regenTicks())
-				<= tolerance)
-			{
-				detectedInterval = config.regenTicks();
-			}
-			else if (Math.abs(detectedInterval - activeRegenTicks)
-				<= tolerance)
-			{
-				detectedInterval = activeRegenTicks;
-			}
+			// RegenTimer already retains the preferred interval when the measured
+			// uncertainty permits it. Do not round away an exact observation here.
 			activeRegenTicks = detectedInterval;
 			learnedRegen = true;
 			saveActiveProfile();
@@ -383,20 +377,26 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	@Override
 	public void keyPressed(KeyEvent event)
 	{
-		if (target == null)
-		{
-			return;
-		}
-
 		if (config.markRegenHotkey().matches(event))
 		{
-			int detectedInterval = timer.markNow(tick, activeRegenTicks);
-			applyDetectedInterval(detectedInterval);
+			clientThread.invokeLater(() ->
+			{
+				if (target != null)
+				{
+					applyDetectedInterval(timer.markNow(tick, activeRegenTicks));
+				}
+			});
 		}
 		else if (config.resetHotkey().matches(event))
 		{
-			timer.reset();
-			resetObservationSource();
+			clientThread.invokeLater(() ->
+			{
+				if (target != null)
+				{
+					timer.reset();
+					resetObservationSource();
+				}
+			});
 		}
 	}
 
@@ -442,20 +442,11 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		NpcTimingProfileStore.Profile profile = config.learnNpcTimings()
 			? profileStore.load(targetNpcId) : new NpcTimingProfileStore.Profile(0, 0);
 		int storedRegenTicks = profile.getRegenTicks();
-		if (storedRegenTicks > 0
-			&& Math.abs(storedRegenTicks - config.regenTicks())
-			<= Math.max(1, config.observationDelayTicks()))
-		{
-			storedRegenTicks = config.regenTicks();
-		}
 		learnedRegen = storedRegenTicks > 0;
 		learnedRespawn = profile.getRespawnTicks() > 0;
 		activeRegenTicks = learnedRegen ? storedRegenTicks : config.regenTicks();
 		activeRespawnTicks = learnedRespawn ? profile.getRespawnTicks() : config.respawnTicks();
-		if (learnedRegen && storedRegenTicks != profile.getRegenTicks())
-		{
-			saveActiveProfile();
-		}
+		timer.updateExpectedRespawnTicks(activeRespawnTicks);
 	}
 
 	private void saveActiveProfile()
@@ -478,6 +469,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 
 		deathHandled = true;
 		target = null;
+		resetObservationSource();
 		timer.onDeath(tick, activeRespawnTicks);
 	}
 
@@ -488,8 +480,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			return false;
 		}
 
-		return targetNpcIndex == npc.getIndex()
-			|| lastTargetPoint != null && lastTargetPoint.distanceTo(npc.getWorldLocation()) <= 8;
+		return targetNpcIndex == npc.getIndex();
 	}
 
 	private void clearTarget()

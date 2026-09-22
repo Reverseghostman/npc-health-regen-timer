@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Match respawns by NPC type and index so nearby NPCs cannot steal the timer.
+- Run hotkey mutations on RuneLite's client thread and ignore queued actions
+  when the target has died or been cleared.
+- Preserve exact measured and saved regeneration intervals; apply uncertainty
+  only when comparing observation windows, not by rounding every nearby rate.
+- Ignore health-bar scale changes and invalid ratios when detecting healing.
+- Clear stale health and inspection readings on death.
+- Update pending respawn estimates when learning is toggled, and support
+  changing the fallback respawn time back to unknown (zero).
+- Keep maximum HP unknown when RuneLite has no data; current inspected HP is
+  not evidence of the NPC's maximum.
+- Add automated plugin event and hotkey regression tests.
+
 ## 0.9.0
 
 - Add a **Splash weapon delay** setting so health-bar uncertainty can match the
