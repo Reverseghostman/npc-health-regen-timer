@@ -28,16 +28,3 @@ readings can calibrate the timer without keeping the NPC in combat.
 - inspected Defence
 - estimated time until full health
 
-RuneLite does not always provide an NPC's maximum Hitpoints. Health recovery
-estimates remain hidden when that information is unavailable.
-
-This plugin only reads client-visible information and draws overlays. It does
-not click, attack, cast spells or send actions to the game server. It is intended
-for ordinary NPCs, not boss-mechanic guidance.
-
-## Development
-
-Run `./gradlew test jar` to test and build the plugin. Run `./gradlew run` to
-open the RuneLite development client.
-
-See [COMPLIANCE.md](COMPLIANCE.md) for the rules review.
