@@ -33,6 +33,7 @@ final class RegenTimer
 
 	private State state = State.OBSERVING;
 	private int lastHealthRatio = -1;
+	private int lastHealthScale = -1;
 	private long lastHealthSampleTick = -1;
 	private int lastExactHitpoints = -1;
 	private long lastExactSampleTick = -1;
@@ -49,6 +50,7 @@ final class RegenTimer
 	{
 		state = State.OBSERVING;
 		lastHealthRatio = -1;
+		lastHealthScale = -1;
 		lastHealthSampleTick = -1;
 		lastExactHitpoints = -1;
 		lastExactSampleTick = -1;
@@ -77,15 +79,16 @@ final class RegenTimer
 			return 0;
 		}
 
-		if (healthRatio < 0 || healthScale <= 0)
+		if (healthRatio < 0 || healthScale <= 0 || healthRatio > healthScale)
 		{
 			lastHealthRatio = -1;
+			lastHealthScale = -1;
 			lastHealthSampleTick = -1;
 			return 0;
 		}
 
 		int detectedInterval = 0;
-		if (lastHealthRatio >= 0 && healthRatio > lastHealthRatio)
+		if (lastHealthRatio >= 0 && healthScale == lastHealthScale && healthRatio > lastHealthRatio)
 		{
 			long start;
 			if (observationDelayTicks > 0)
@@ -100,6 +103,7 @@ final class RegenTimer
 		}
 
 		lastHealthRatio = healthRatio;
+		lastHealthScale = healthScale;
 		lastHealthSampleTick = tick;
 		return detectedInterval;
 	}
@@ -153,6 +157,7 @@ final class RegenTimer
 	void onDeath(long tick, int expectedRespawnTicks)
 	{
 		lastHealthRatio = -1;
+		lastHealthScale = -1;
 		lastHealthSampleTick = -1;
 		lastExactHitpoints = -1;
 		lastExactSampleTick = -1;
@@ -194,13 +199,13 @@ final class RegenTimer
 
 	void updateExpectedRespawnTicks(int expectedTicks)
 	{
-		if (state != State.WAITING_FOR_RESPAWN || deathTick < 0 || expectedTicks <= 0)
+		if (state != State.WAITING_FOR_RESPAWN || deathTick < 0)
 		{
 			return;
 		}
 
-		expectedRespawnTick = deathTick + expectedTicks;
-		int newAppliedTicks = expectedTicks;
+		int newAppliedTicks = Math.max(0, expectedTicks);
+		expectedRespawnTick = newAppliedTicks > 0 ? deathTick + newAppliedTicks : -1;
 		if (windowStartTick >= 0)
 		{
 			int correction = newAppliedTicks - appliedRespawnTicks;

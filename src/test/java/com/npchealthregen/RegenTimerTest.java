@@ -8,6 +8,42 @@ import static org.junit.Assert.assertNull;
 public class RegenTimerTest
 {
 	@Test
+	public void changedHealthBarScaleDoesNotLookLikeHealing()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleHealth(15, 30, 10);
+		timer.sampleHealth(30, 60, 11);
+		assertEquals(0, timer.getObservedRegens());
+		assertNull(timer.getUpcomingWindow(11, 100));
+		timer.sampleHealth(31, 60, 12);
+		assertEquals(1, timer.getObservedRegens());
+	}
+
+	@Test
+	public void invalidRatioCannotCalibrateTimer()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleHealth(20, 30, 10);
+		timer.sampleHealth(31, 30, 11);
+		timer.sampleHealth(21, 30, 12);
+		assertEquals(0, timer.getObservedRegens());
+	}
+
+	@Test
+	public void disablingRespawnEstimateClearsCountdownAndCorrectsPhase()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.markNow(50);
+		timer.onDeath(80, 20);
+		timer.updateExpectedRespawnTicks(0);
+		assertEquals(-1, timer.getRespawnTicksRemaining(90));
+		assertEquals(10, timer.getRespawnTicksElapsed(90));
+		assertEquals(60, timer.getUpcomingWindow(90, 100).getEarliestTicks());
+		assertEquals(25, timer.onRespawn(105));
+		assertEquals(70, timer.getUpcomingWindow(105, 100).getEarliestTicks());
+	}
+
+	@Test
 	public void learnsObservationWindowFromHealthIncrease()
 	{
 		RegenTimer timer = new RegenTimer();
