@@ -1,6 +1,6 @@
 # Rules and Plugin Hub Review
 
-Reviewed on 4 September 2026 against:
+Reviewed on 22 September 2026 against:
 
 - [Jagex Third Party Client Guidelines](https://secure.runescape.com/m=news/third-party-client-guidelines?oldschool=1)
 - [RuneLite Plugin Hub Review](https://github.com/runelite/runelite/wiki/Plugin-Hub-Review)
