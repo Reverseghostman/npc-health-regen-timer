@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Reject wide interval midpoints as learned rates and avoid learning skipped
+  regeneration cycles as one long interval.
+- Preserve compatible phase information across uniquely matched later cycles.
+- Keep approximate regen windows visible in both overlays while they refine.
+- Combine cumulative and successive inspection HP changes to refine possible
+  regen phases across periodic casts, including unchanged HP and missed cycles.
+- Include cast-to-result timing uncertainty; invalidate HP comparisons after
+  observed damage and avoid no-heal evidence from capped HP.
+- Add Recalibrate Regen Timer to the selected NPC's Shift menu; it and Reset
+  timer now clear the saved regen rate while retaining respawn timing.
+
+- Read pending inspection results on client ticks as soon as the visible result
+  arrives, so quickly closed panels do not wait for a fixed game-tick delay.
+- Ignore a previous cast's still-visible panel while waiting for fresh results;
+  do not treat unchanged text in an open panel as repeated observations.
+- Continue checking an accepted panel for delayed changes and stop tracking it
+  when closed or when inspecting another NPC.
+- Cover rapid unchanged/changed inspection casts and preservation of a narrow
+  regeneration phase with regression tests.
+
 - Match respawns by NPC type and index so nearby NPCs cannot steal the timer.
 - Run hotkey mutations on RuneLite's client thread and ignore queued actions
   when the target has died or been cleared.
@@ -14,6 +34,12 @@
 - Keep maximum HP unknown when RuneLite has no data; current inspected HP is
   not evidence of the NPC's maximum.
 - Add automated plugin event and hotkey regression tests.
+- Create the "Select Regen Timer" menu entry through `Client#getMenu()`
+  instead of the deprecated `Client#createMenuEntry(int)`, so the plugin
+  keeps building against future RuneLite client releases that drop it.
+- Add a **Clear Regen Timer** option (Shift-right-click the currently
+  tracked NPC) so tracking can be stopped without waiting for the NPC to
+  despawn.
 
 ## 0.9.0
 

@@ -219,7 +219,7 @@ public interface NpcHealthRegenConfig extends Config
 	@ConfigItem(
 		keyName = "resetHotkey",
 		name = "Reset timer",
-		description = "Clear calibration for the current NPC and begin observing again"
+		description = "Clear the current NPC's saved regen rate and phase, restore the default interval and observe again"
 	)
 	default Keybind resetHotkey()
 	{

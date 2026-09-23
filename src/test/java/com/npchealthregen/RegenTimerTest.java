@@ -3,6 +3,8 @@ package com.npchealthregen;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertNull;
 
 public class RegenTimerTest
@@ -188,14 +190,14 @@ public class RegenTimerTest
 	}
 
 	@Test
-	public void slowerSplashWeaponStillRetainsPreferredWholeInterval()
+	public void slowerSplashWeaponDoesNotSaveAnUncertainInterval()
 	{
 		RegenTimer timer = new RegenTimer();
 		timer.sampleHealth(20, 30, 99, 100, 5);
 		timer.sampleHealth(21, 30, 103, 100, 5);
 		timer.sampleHealth(21, 30, 205, 100, 5);
 
-		assertEquals(100, timer.sampleHealth(22, 30, 207, 100, 5));
+		assertEquals(0, timer.sampleHealth(22, 30, 207, 100, 5));
 	}
 
 	@Test
@@ -302,5 +304,93 @@ public class RegenTimerTest
 
 		assertNull(timer.getUpcomingWindow(80, 100));
 		assertEquals(RegenTimer.State.OBSERVING, timer.getState());
+	}
+
+	@Test
+	public void sparseInspectionDoesNotWidenCompatiblePrecisePhase()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleExactStats(50, 20, 10, 100);
+		timer.sampleExactStats(51, 21, 11, 100);
+		timer.sampleExactStats(51, 21, 90, 100);
+		timer.sampleExactStats(52, 22, 121, 100);
+		RegenTimer.Window window = timer.getUpcomingWindow(122, 100);
+		assertEquals(89, window.getEarliestTicks());
+		assertEquals(89, window.getLatestTicks());
+		assertEquals(2, timer.getObservedRegens());
+	}
+
+	@Test
+	public void wideInspectionEvidenceDoesNotLearnMidpoint112()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleExactHealth(50, 0, 100);
+		timer.sampleExactHealth(51, 10, 100);
+		timer.sampleExactHealth(51, 110, 100);
+		assertEquals(0, timer.sampleExactHealth(52, 124, 100));
+		assertFalse(timer.isPhasePrecise());
+	}
+
+	@Test
+	public void skippedCyclesKeepPhaseWithoutLearningTwoHundredTickRate()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.markNow(10, 100);
+		timer.sampleExactHealth(50, 200, 100);
+		assertEquals(0, timer.sampleExactHealth(51, 212, 100));
+		assertEquals(0, timer.sampleExactHealth(52, 312, 100));
+		assertTrue(timer.isPhasePrecise());
+		assertEquals(97, timer.getUpcomingWindow(313, 100).getEarliestTicks());
+	}
+
+	@Test
+	public void frequentRecastsNarrowAnEightyFourTickWindow()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleExactHealth(50, 0, 100);
+		timer.sampleExactHealth(51, 85, 100);
+		assertEquals(84, timer.getPhaseUncertaintyTicks());
+		assertFalse(timer.isPhasePrecise());
+		// Elapsing time alone must not make a wide phase look precise.
+		timer.getUpcomingWindow(84, 100);
+		assertFalse(timer.isPhasePrecise());
+		timer.sampleExactHealth(51, 99, 100);
+		assertEquals(0, timer.sampleExactHealth(52, 102, 100));
+		assertTrue(timer.isPhasePrecise());
+		assertEquals(1, timer.getPhaseUncertaintyTicks());
+	}
+
+	@Test
+	public void inspectionDelayAndMinuteSpacedReadingsRefineTheDisplayedWindow()
+	{
+		RegenTimer timer = new RegenTimer();
+		long previousWidth = 100;
+		for (long result : new long[]{3, 85, 180, 275, 370, 465, 560, 655, 747})
+		{
+			int hp = 51 + (int) Math.floorDiv(result - 50, 100);
+			int learned = timer.sampleInspectionStats(hp, -1, 200, result - 3, result, 100);
+			assertTrue(learned == 0 || learned == 100);
+			RegenTimer.Window window = timer.getUpcomingWindow(result + 1, 100);
+			if (window != null)
+			{
+				assertTrue(timer.getPhaseUncertaintyTicks() <= previousWidth);
+				previousWidth = timer.getPhaseUncertaintyTicks();
+				long end = result + 1 + window.getLatestTicks();
+				long actual = 50 + Math.floorDiv(end - 50, 100) * 100;
+				assertTrue("result=" + result + " start=" + (result + 1 + window.getEarliestTicks())
+					+ " end=" + end + " width=" + previousWidth,
+					actual >= end - previousWidth);
+			}
+		}
+		assertTrue(previousWidth <= 10);
+	}
+
+	@Test
+	public void overheadKeepsShowingApproximateWideWindows()
+	{
+		assertEquals("Regen: ~11-41t",
+			NpcHealthRegenSceneOverlay.formatRegenCountdown(new RegenTimer.Window(11, 41)));
+		assertEquals("Regen: ~NOW-84t",
+			NpcHealthRegenSceneOverlay.formatRegenCountdown(new RegenTimer.Window(0, 84)));
 	}
 }
