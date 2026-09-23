@@ -183,6 +183,30 @@ public class NpcHealthRegenPluginBehaviorTest
 		assertSame(other, plugin.getTarget());
 	}
 
+	@Test
+	public void staleClearEntryDoesNotClearReplacementTarget() throws Exception
+	{
+		Consumer<MenuEntry> onClick = captureMenuClick(target);
+		NPC replacement = npc(1, 99);
+		select(replacement);
+
+		onClick.accept(mock(MenuEntry.class));
+		assertSame(replacement, plugin.getTarget());
+	}
+
+	@Test
+	public void staleSelectEntryDoesNotResetCurrentTarget() throws Exception
+	{
+		NPC other = npc(1, 99);
+		Consumer<MenuEntry> onClick = captureMenuClick(other);
+		select(other);
+		plugin.getTimer().markNow(10);
+
+		onClick.accept(mock(MenuEntry.class));
+		assertSame(other, plugin.getTarget());
+		assertEquals(1, plugin.getTimer().getObservedRegens());
+	}
+
 	private String lastMenuOption;
 
 	private Consumer<MenuEntry> captureMenuClick(NPC clickedNpc) throws Exception

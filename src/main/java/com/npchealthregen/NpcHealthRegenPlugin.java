@@ -201,6 +201,11 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			.setType(MenuAction.RUNELITE)
 			.onClick(menuEntry ->
 			{
+				if (isCurrentTarget != (npc == target))
+				{
+					return;
+				}
+
 				if (isCurrentTarget)
 				{
 					clearTarget();
