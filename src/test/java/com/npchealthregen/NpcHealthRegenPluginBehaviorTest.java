@@ -3,10 +3,16 @@ package com.npchealthregen;
 import java.awt.event.KeyEvent;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.function.Consumer;
 import net.runelite.api.Client;
+import net.runelite.api.KeyCode;
+import net.runelite.api.Menu;
+import net.runelite.api.MenuAction;
+import net.runelite.api.MenuEntry;
 import net.runelite.api.NPC;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ActorDeath;
+import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.NpcSpawned;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
@@ -154,6 +160,55 @@ public class NpcHealthRegenPluginBehaviorTest
 		assertEquals(5, plugin.getLastInspectedHitpoints());
 		assertEquals(-1, plugin.getMaximumHitpoints());
 		assertNull(plugin.getTimeUntilFullHitpoints());
+	}
+
+	@Test
+	public void shiftRightClickOnCurrentTargetOffersClearInsteadOfSelect() throws Exception
+	{
+		Consumer<MenuEntry> onClick = captureMenuClick(target);
+		assertEquals("Clear Regen Timer", lastMenuOption);
+
+		onClick.accept(mock(MenuEntry.class));
+		assertNull(plugin.getTarget());
+	}
+
+	@Test
+	public void shiftRightClickOnAnotherNpcOffersSelect() throws Exception
+	{
+		NPC other = npc(1, 99);
+		Consumer<MenuEntry> onClick = captureMenuClick(other);
+		assertEquals("Select Regen Timer", lastMenuOption);
+
+		onClick.accept(mock(MenuEntry.class));
+		assertSame(other, plugin.getTarget());
+	}
+
+	private String lastMenuOption;
+
+	private Consumer<MenuEntry> captureMenuClick(NPC clickedNpc) throws Exception
+	{
+		Client client = mock(Client.class);
+		when(client.isKeyPressed(KeyCode.KC_SHIFT)).thenReturn(true);
+		Menu menu = mock(Menu.class);
+		when(client.getMenu()).thenReturn(menu);
+		MenuEntry newEntry = mock(MenuEntry.class, RETURNS_SELF);
+		when(menu.createMenuEntry(-1)).thenReturn(newEntry);
+		set("client", client);
+
+		MenuEntry sourceEntry = mock(MenuEntry.class);
+		when(sourceEntry.getType()).thenReturn(MenuAction.EXAMINE_NPC);
+		when(sourceEntry.getNpc()).thenReturn(clickedNpc);
+		when(sourceEntry.getWorldViewId()).thenReturn(-1);
+		MenuEntryAdded event = new MenuEntryAdded(sourceEntry);
+
+		ArgumentCaptor<String> option = ArgumentCaptor.forClass(String.class);
+		plugin.onMenuEntryAdded(event);
+		verify(newEntry).setOption(option.capture());
+		lastMenuOption = option.getValue();
+
+		ArgumentCaptor<Consumer<MenuEntry>> click = ArgumentCaptor.forClass(Consumer.class);
+		verify(newEntry).onClick(click.capture());
+		return click.getValue();
 	}
 
 	private void kill()
