@@ -132,17 +132,17 @@ final class NpcHealthRegenSceneOverlay extends Overlay
 			text, TEXT);
 	}
 
-	private static String formatRegenCountdown(RegenTimer.Window window)
+	static String formatRegenCountdown(RegenTimer.Window window)
 	{
 		long earliest = window.getEarliestTicks();
 		long latest = window.getLatestTicks();
 		if (earliest == 0)
 		{
-			return latest == 0 ? "Regen: NOW" : "Regen: NOW-" + latest + "t";
+			return latest == 0 ? "Regen: ~NOW" : "Regen: ~NOW-" + latest + "t";
 		}
 		return earliest == latest
-			? "Regen: " + earliest + "t"
-			: "Regen: " + earliest + "-" + latest + "t";
+			? "Regen: ~" + earliest + "t"
+			: "Regen: ~" + earliest + "-" + latest + "t";
 	}
 
 	private static void renderShape(

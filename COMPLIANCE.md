@@ -1,6 +1,6 @@
 # Rules and Plugin Hub Review
 
-Reviewed on 4 September 2026 against:
+Reviewed on 22 September 2026 against:
 
 - [Jagex Third Party Client Guidelines](https://secure.runescape.com/m=news/third-party-client-guidelines?oldschool=1)
 - [RuneLite Plugin Hub Review](https://github.com/runelite/runelite/wiki/Plugin-Hub-Review)
@@ -17,8 +17,10 @@ RuneLite's configuration, keyed by the selected NPC's ID.
 When the player manually casts Monster Inspect or Monster Examine on the
 selected NPC, the plugin may also read the Hitpoints and Defence values already
 displayed by the game. It does not cast the spell, select its target or automate
-any resulting action. Only an increase in inspected Hitpoints is used as a
-health-regeneration observation. Defence-at-full is labelled as an estimate and
+any resulting action. Increases in inspected Hitpoints or Defence supply
+restoration observations. Fresh unchanged HP readings below known maximum HP
+also constrain the possible regeneration phase. Cast-to-result timing remains
+an uncertainty range. Defence-at-full is labelled as an estimate and
 does not trigger or recommend a combat action.
 
 The optional scene display highlights only the NPC manually selected with the
@@ -45,8 +47,9 @@ The source code:
   timings;
 - does not click, cast, attack, move the mouse, inject keyboard input or automate
   any game action;
-- adds one `MenuAction.RUNELITE` entry for manual selection, which runs only in
-  the client and does not send an action to the game server;
+- adds `MenuAction.RUNELITE` entries for manual selection, clearing and
+  recalibration, which run only in the client and do not send actions to the
+  game server;
 - does not remove, reorder or alter the game's Attack, Cast or PvP menu entries;
   and
 - draws only informational panel, NPC, overhead-text and respawn-location

@@ -14,6 +14,7 @@ import net.runelite.api.MenuAction;
 import net.runelite.api.NPC;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ActorDeath;
+import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
@@ -40,7 +41,6 @@ import net.runelite.client.util.Text;
 )
 public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 {
-	private static final int INSPECTION_RESULT_WAIT_TICKS = 3;
 	private static final int INSPECTION_RESULT_TIMEOUT_TICKS = 8;
 
 	private enum ObservationSource
@@ -101,6 +101,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	private ObservationSource observationSource = ObservationSource.HEALTH_BAR;
 	private long inspectionSampleTick = -1;
 	private long inspectionDeadlineTick = -1;
+	private boolean watchingInspection;
+	private MonsterInspectionReader.Snapshot inspectionBeforeCast;
 	private int lastInspectedHitpoints = -1;
 	private int lastInspectedDefence = -1;
 	private long lastInspectedTick = -1;
@@ -143,7 +145,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 				lastTargetSize = target.getTransformedComposition().getSize();
 			}
 			processHealthSample(target);
-			if (inspectionSampleTick >= 0)
+			if (inspectionSampleTick >= 0 || watchingInspection)
 			{
 				processInspectionResult();
 			}
@@ -151,10 +153,18 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	}
 
 	@Subscribe
+	public void onClientTick(ClientTick event)
+	{
+		if (target != null && inspectionSampleTick >= 0)
+		{
+			processInspectionResult();
+		}
+	}
+
+	@Subscribe
 	public void onMenuOptionClicked(MenuOptionClicked event)
 	{
-		if (target == null || event.getMenuAction() != MenuAction.WIDGET_TARGET_ON_NPC
-			|| event.getMenuEntry().getNpc() != target)
+		if (target == null || event.getMenuAction() != MenuAction.WIDGET_TARGET_ON_NPC)
 		{
 			return;
 		}
@@ -171,9 +181,20 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			return;
 		}
 
+		// A same-named NPC's panel must not update the selected NPC's timer.
+		watchingInspection = false;
+		inspectionSampleTick = -1;
+		inspectionDeadlineTick = -1;
+		inspectionBeforeCast = null;
+		if (event.getMenuEntry().getNpc() != target)
+		{
+			return;
+		}
+		inspectionBeforeCast = MonsterInspectionReader.find(client, targetName);
+
 		observationSource = lastHealthRatio >= 0
 			? ObservationSource.COMBINED : ObservationSource.MONSTER_INSPECTION;
-		inspectionSampleTick = tick + INSPECTION_RESULT_WAIT_TICKS;
+		inspectionSampleTick = tick;
 		inspectionDeadlineTick = tick + INSPECTION_RESULT_TIMEOUT_TICKS;
 	}
 
@@ -192,13 +213,45 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			return;
 		}
 
-		client.createMenuEntry(-1)
-			.setOption("Select Regen Timer")
+		boolean isCurrentTarget = npc == target;
+		if (isCurrentTarget)
+		{
+			client.getMenu().createMenuEntry(-1)
+				.setOption("Recalibrate Regen Timer")
+				.setTarget(event.getTarget())
+				.setWorldViewId(event.getMenuEntry().getWorldViewId())
+				.setIdentifier(event.getIdentifier())
+				.setType(MenuAction.RUNELITE)
+				.onClick(menuEntry ->
+				{
+					if (npc == target)
+					{
+						recalibrate();
+					}
+				});
+		}
+		client.getMenu().createMenuEntry(-1)
+			.setOption(isCurrentTarget ? "Clear Regen Timer" : "Select Regen Timer")
 			.setTarget(event.getTarget())
 			.setWorldViewId(event.getMenuEntry().getWorldViewId())
 			.setIdentifier(event.getIdentifier())
 			.setType(MenuAction.RUNELITE)
-			.onClick(menuEntry -> selectTarget(npc));
+			.onClick(menuEntry ->
+			{
+				if (isCurrentTarget != (npc == target))
+				{
+					return;
+				}
+
+				if (isCurrentTarget)
+				{
+					clearTarget();
+				}
+				else
+				{
+					selectTarget(npc);
+				}
+			});
 	}
 
 	@Subscribe
@@ -215,6 +268,10 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			return;
 		}
 
+		if (event.getHitsplat() != null && event.getHitsplat().getAmount() > 0)
+		{
+			timer.invalidateInspectionHealth();
+		}
 		processHealthSample(npc);
 	}
 
@@ -224,6 +281,10 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		int healthScale = npc.getHealthScale();
 		if (healthRatio >= 0 && healthScale > 0)
 		{
+			if (healthScale == lastHealthScale && healthRatio < lastHealthRatio)
+			{
+				timer.invalidateInspectionHealth();
+			}
 			if (healthRatio != lastHealthRatio || healthScale != lastHealthScale
 				|| lastHealthSampleTick < 0)
 			{
@@ -244,22 +305,43 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 
 	private void processInspectionResult()
 	{
-		if (inspectionSampleTick < 0 || tick < inspectionSampleTick)
+		if (inspectionSampleTick >= 0 && tick < inspectionSampleTick)
 		{
 			return;
 		}
-		if (tick > inspectionDeadlineTick)
+		if (inspectionSampleTick >= 0 && tick > inspectionDeadlineTick)
 		{
 			inspectionSampleTick = -1;
 			inspectionDeadlineTick = -1;
+			inspectionBeforeCast = null;
+			return;
+		}
+		if (inspectionSampleTick < 0 && !watchingInspection)
+		{
 			return;
 		}
 
 		MonsterInspectionReader.Snapshot snapshot = MonsterInspectionReader.find(client, targetName);
 		if (snapshot == null)
 		{
+			watchingInspection = false;
+			inspectionBeforeCast = null;
 			return;
 		}
+		if (inspectionBeforeCast != null
+			&& snapshot.getHitpoints() == inspectionBeforeCast.getHitpoints()
+			&& snapshot.getDefence() == inspectionBeforeCast.getDefence())
+		{
+			return;
+		}
+		if (inspectionSampleTick < 0 && snapshot.getHitpoints() == lastInspectedHitpoints
+			&& snapshot.getDefence() == lastInspectedDefence)
+		{
+			// A static panel is not a new server observation every tick.
+			return;
+		}
+		watchingInspection = true;
+		inspectionBeforeCast = null;
 
 		lastInspectedHitpoints = snapshot.getHitpoints();
 		lastInspectedDefence = snapshot.getDefence();
@@ -270,10 +352,12 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		lastInspectedTick = tick;
 		observationSource = lastHealthRatio >= 0
 			? ObservationSource.COMBINED : ObservationSource.MONSTER_INSPECTION;
+		long earliestSampleTick = inspectionSampleTick >= 0 ? inspectionSampleTick : tick;
 		inspectionSampleTick = -1;
 		inspectionDeadlineTick = -1;
-		applyDetectedInterval(timer.sampleExactHealth(
-			lastInspectedHitpoints, tick, activeRegenTicks));
+		applyDetectedInterval(timer.sampleInspectionStats(
+			lastInspectedHitpoints, lastInspectedDefence, maximumHitpoints,
+			earliestSampleTick, tick, activeRegenTicks));
 	}
 
 	private void applyDetectedInterval(int detectedInterval)
@@ -393,8 +477,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			{
 				if (target != null)
 				{
-					timer.reset();
-					resetObservationSource();
+					recalibrate();
 				}
 			});
 		}
@@ -435,6 +518,16 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		{
 			maximumHitpoints = Math.max(maximumHitpoints, health);
 		}
+	}
+
+	private void recalibrate()
+	{
+		timer.reset();
+		resetObservationSource();
+		activeRegenTicks = config.regenTicks();
+		learnedRegen = false;
+		// Clear only this NPC type's regen rate; retain its respawn measurement.
+		profileStore.save(targetNpcId, 0, learnedRespawn ? activeRespawnTicks : 0);
 	}
 
 	private void loadActiveProfile()
@@ -504,6 +597,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 
 	private void resetObservationSource()
 	{
+		watchingInspection = false;
+		inspectionBeforeCast = null;
 		observationSource = ObservationSource.HEALTH_BAR;
 		inspectionSampleTick = -1;
 		inspectionDeadlineTick = -1;

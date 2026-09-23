@@ -133,7 +133,7 @@ final class NpcHealthRegenOverlay extends OverlayPanel
 		String value = earliest == 0
 			? (latest == 0 ? "NOW" : "NOW - " + formatTicks(latest))
 			: formatWindow(earliest, latest);
-		addLine(label, value, colour);
+		addLine(label, "~" + value, colour);
 
 		if (config.showTimeUntilFullHp())
 		{

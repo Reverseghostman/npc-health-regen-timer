@@ -3,10 +3,19 @@ package com.npchealthregen;
 import java.awt.event.KeyEvent;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.function.Consumer;
 import net.runelite.api.Client;
+import net.runelite.api.KeyCode;
+import net.runelite.api.Menu;
+import net.runelite.api.MenuAction;
+import net.runelite.api.MenuEntry;
 import net.runelite.api.NPC;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ActorDeath;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.events.ClientTick;
+import net.runelite.api.events.MenuOptionClicked;
+import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.NpcSpawned;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
@@ -154,6 +163,184 @@ public class NpcHealthRegenPluginBehaviorTest
 		assertEquals(5, plugin.getLastInspectedHitpoints());
 		assertEquals(-1, plugin.getMaximumHitpoints());
 		assertNull(plugin.getTimeUntilFullHitpoints());
+	}
+
+	@Test
+	public void shiftRightClickOnCurrentTargetOffersClearInsteadOfSelect() throws Exception
+	{
+		Consumer<MenuEntry> onClick = captureMenuClick(target);
+		assertEquals("Clear Regen Timer", lastMenuOption);
+
+		onClick.accept(mock(MenuEntry.class));
+		assertNull(plugin.getTarget());
+	}
+
+	@Test
+	public void shiftRightClickOnAnotherNpcOffersSelect() throws Exception
+	{
+		NPC other = npc(1, 99);
+		Consumer<MenuEntry> onClick = captureMenuClick(other);
+		assertEquals("Select Regen Timer", lastMenuOption);
+
+		onClick.accept(mock(MenuEntry.class));
+		assertSame(other, plugin.getTarget());
+	}
+
+	@Test
+	public void staleClearEntryDoesNotClearReplacementTarget() throws Exception
+	{
+		Consumer<MenuEntry> onClick = captureMenuClick(target);
+		NPC replacement = npc(1, 99);
+		select(replacement);
+
+		onClick.accept(mock(MenuEntry.class));
+		assertSame(replacement, plugin.getTarget());
+	}
+
+	@Test
+	public void staleSelectEntryDoesNotResetCurrentTarget() throws Exception
+	{
+		NPC other = npc(1, 99);
+		Consumer<MenuEntry> onClick = captureMenuClick(other);
+		select(other);
+		plugin.getTimer().markNow(10);
+
+		onClick.accept(mock(MenuEntry.class));
+		assertSame(other, plugin.getTarget());
+		assertEquals(1, plugin.getTimer().getObservedRegens());
+	}
+
+	private String lastMenuOption;
+
+	private Consumer<MenuEntry> captureMenuClick(NPC clickedNpc) throws Exception
+	{
+		Client client = mock(Client.class);
+		when(client.isKeyPressed(KeyCode.KC_SHIFT)).thenReturn(true);
+		Menu menu = mock(Menu.class);
+		when(client.getMenu()).thenReturn(menu);
+		MenuEntry newEntry = mock(MenuEntry.class, RETURNS_SELF);
+		when(menu.createMenuEntry(-1)).thenReturn(newEntry);
+		set("client", client);
+
+		MenuEntry sourceEntry = mock(MenuEntry.class);
+		when(sourceEntry.getType()).thenReturn(MenuAction.EXAMINE_NPC);
+		when(sourceEntry.getNpc()).thenReturn(clickedNpc);
+		when(sourceEntry.getWorldViewId()).thenReturn(-1);
+		MenuEntryAdded event = new MenuEntryAdded(sourceEntry);
+
+		ArgumentCaptor<String> option = ArgumentCaptor.forClass(String.class);
+		plugin.onMenuEntryAdded(event);
+		verify(newEntry, times(clickedNpc == plugin.getTarget() ? 2 : 1)).setOption(option.capture());
+		lastMenuOption = option.getValue();
+
+		ArgumentCaptor<Consumer<MenuEntry>> click = ArgumentCaptor.forClass(Consumer.class);
+		verify(newEntry, times(clickedNpc == plugin.getTarget() ? 2 : 1)).onClick(click.capture());
+		return click.getValue();
+	}
+
+	@Test
+	public void rapidRecastsCaptureUnchangedBaselineThenHeal() throws Exception
+	{
+		Client client = mock(Client.class);
+		Widget root = mock(Widget.class);
+		set("client", client);
+		when(target.getHealthRatio()).thenReturn(-1);
+		when(client.getWidgetRoots()).thenReturn(new Widget[0]);
+		castInspection(target);
+		when(root.getText()).thenReturn("Goblin<br>Hitpoints: 5<br>Defence: 3");
+		when(client.getWidgetRoots()).thenReturn(new Widget[]{root});
+		plugin.onGameTick(new GameTick());
+		assertEquals(5, plugin.getLastInspectedHitpoints());
+
+		// Close and immediately recast: the next unchanged reading is evidence too.
+		set("tick", 30L);
+		when(client.getWidgetRoots()).thenReturn(new Widget[0]);
+		castInspection(target);
+		when(client.getWidgetRoots()).thenReturn(new Widget[]{root});
+		plugin.onGameTick(new GameTick());
+		when(client.getWidgetRoots()).thenReturn(new Widget[0]);
+		castInspection(target);
+		when(root.getText()).thenReturn("Goblin<br>Hitpoints: 6<br>Defence: 4");
+		when(client.getWidgetRoots()).thenReturn(new Widget[]{root});
+		plugin.onGameTick(new GameTick());
+		assertEquals(6, plugin.getLastInspectedHitpoints());
+		assertEquals(4, plugin.getLastInspectedDefence());
+		assertEquals(1, plugin.getTimer().getObservedRegens());
+		RegenTimer.Window window = plugin.getTimer().getUpcomingWindow(33, 100);
+		assertEquals(98, window.getEarliestTicks());
+		assertEquals(99, window.getLatestTicks());
+	}
+
+	@Test
+	public void oldPanelCannotConsumeNewCastAndStaticPanelIsNotResampled() throws Exception
+	{
+		Client client = mock(Client.class);
+		Widget root = mock(Widget.class);
+		set("client", client);
+		when(target.getHealthRatio()).thenReturn(-1);
+		when(client.getWidgetRoots()).thenReturn(new Widget[0]);
+		castInspection(target);
+		when(root.getText()).thenReturn("Goblin<br>Hitpoints: 5<br>Defence: 3");
+		when(client.getWidgetRoots()).thenReturn(new Widget[]{root});
+		plugin.onGameTick(new GameTick());
+		set("tick", 20L);
+		castInspection(target);
+		plugin.onGameTick(new GameTick());
+		when(root.getText()).thenReturn("Goblin<br>Hitpoints: 6<br>Defence: 3");
+		plugin.onGameTick(new GameTick());
+		assertEquals(6, plugin.getLastInspectedHitpoints());
+		plugin.onGameTick(new GameTick());
+		assertFalse(plugin.isCurrentHitpointsExact());
+		assertEquals(1, plugin.getTimer().getObservedRegens());
+		castInspection(npc(1, 43));
+		when(root.getText()).thenReturn("Goblin<br>Hitpoints: 9<br>Defence: 3");
+		plugin.onGameTick(new GameTick());
+		assertEquals(6, plugin.getLastInspectedHitpoints());
+	}
+
+	private void castInspection(NPC npc)
+	{
+		MenuOptionClicked event = mock(MenuOptionClicked.class);
+		MenuEntry entry = mock(MenuEntry.class);
+		when(entry.getNpc()).thenReturn(npc);
+		when(event.getMenuEntry()).thenReturn(entry);
+		when(event.getMenuAction()).thenReturn(MenuAction.WIDGET_TARGET_ON_NPC);
+		when(event.getMenuTarget()).thenReturn("<col=00ff00>Monster Inspect</col> -> Goblin");
+		plugin.onMenuOptionClicked(event);
+	}
+
+	@Test
+	public void clientTickCapturesResultBeforeNextGameTick() throws Exception
+	{
+		Client client = mock(Client.class);
+		Widget root = mock(Widget.class);
+		set("client", client);
+		when(client.getWidgetRoots()).thenReturn(new Widget[0]);
+		castInspection(target);
+		when(root.getText()).thenReturn("Goblin<br>Hitpoints: 5<br>Defence: 3");
+		when(client.getWidgetRoots()).thenReturn(new Widget[]{root});
+		plugin.onClientTick(mock(ClientTick.class));
+		assertEquals(5, plugin.getLastInspectedHitpoints());
+		assertEquals(0, plugin.getTick());
+		when(root.getText()).thenReturn("Goblin<br>Hitpoints: 6<br>Defence: 3");
+		// No new cast: client frames do not repeatedly resample the old panel.
+		plugin.onClientTick(mock(ClientTick.class));
+		assertEquals(5, plugin.getLastInspectedHitpoints());
+	}
+
+	@Test
+	public void recalibrationClearsBadSavedRegenButPreservesRespawn() throws Exception
+	{
+		when(profiles.load(1)).thenReturn(new NpcTimingProfileStore.Profile(112, 20));
+		select(target);
+		plugin.getTimer().markNow(1);
+		plugin.keyPressed(key(KeyEvent.VK_F7));
+		runQueuedHotkey();
+		assertEquals(100, plugin.getActiveRegenTicks());
+		assertFalse(plugin.isLearnedRegen());
+		assertEquals(20, plugin.getActiveRespawnTicks());
+		assertSame(target, plugin.getTarget());
+		verify(profiles).save(1, 0, 20);
 	}
 
 	private void kill()
