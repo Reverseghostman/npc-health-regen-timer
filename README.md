@@ -8,6 +8,9 @@ Tracks health regeneration and respawn timing for a selected NPC.
 2. Damage the NPC and keep its health bar visible.
 3. The first visible heal starts the timer. Later heals refine the interval.
 
+Hold **Shift** and right-click the currently tracked NPC again to select
+**Clear Regen Timer** and stop tracking it without waiting for it to despawn.
+
 The default regeneration interval is 100 game ticks (60 seconds). Learned
 regeneration and respawn times are saved locally for each NPC type.
 

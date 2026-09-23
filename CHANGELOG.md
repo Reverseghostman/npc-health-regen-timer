@@ -17,6 +17,9 @@
 - Create the "Select Regen Timer" menu entry through `Client#getMenu()`
   instead of the deprecated `Client#createMenuEntry(int)`, so the plugin
   keeps building against future RuneLite client releases that drop it.
+- Add a **Clear Regen Timer** option (Shift-right-click the currently
+  tracked NPC) so tracking can be stopped without waiting for the NPC to
+  despawn.
 
 ## 0.9.0
 

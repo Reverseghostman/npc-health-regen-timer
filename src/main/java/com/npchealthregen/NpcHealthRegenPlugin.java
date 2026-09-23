@@ -192,13 +192,24 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			return;
 		}
 
+		boolean isCurrentTarget = npc == target;
 		client.getMenu().createMenuEntry(-1)
-			.setOption("Select Regen Timer")
+			.setOption(isCurrentTarget ? "Clear Regen Timer" : "Select Regen Timer")
 			.setTarget(event.getTarget())
 			.setWorldViewId(event.getMenuEntry().getWorldViewId())
 			.setIdentifier(event.getIdentifier())
 			.setType(MenuAction.RUNELITE)
-			.onClick(menuEntry -> selectTarget(npc));
+			.onClick(menuEntry ->
+			{
+				if (isCurrentTarget)
+				{
+					clearTarget();
+				}
+				else
+				{
+					selectTarget(npc);
+				}
+			});
 	}
 
 	@Subscribe
