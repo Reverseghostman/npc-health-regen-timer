@@ -192,7 +192,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			return;
 		}
 
-		client.createMenuEntry(-1)
+		client.getMenu().createMenuEntry(-1)
 			.setOption("Select Regen Timer")
 			.setTarget(event.getTarget())
 			.setWorldViewId(event.getMenuEntry().getWorldViewId())

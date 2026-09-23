@@ -14,6 +14,9 @@
 - Keep maximum HP unknown when RuneLite has no data; current inspected HP is
   not evidence of the NPC's maximum.
 - Add automated plugin event and hotkey regression tests.
+- Create the "Select Regen Timer" menu entry through `Client#getMenu()`
+  instead of the deprecated `Client#createMenuEntry(int)`, so the plugin
+  keeps building against future RuneLite client releases that drop it.
 
 ## 0.9.0
 
