@@ -133,7 +133,7 @@ public interface NpcHealthRegenConfig extends Config
 	)
 	default boolean showInspectedStats()
 	{
-		return false;
+		return true;
 	}
 
 	@ConfigItem(

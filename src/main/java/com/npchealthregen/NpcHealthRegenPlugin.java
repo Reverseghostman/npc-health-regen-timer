@@ -13,6 +13,8 @@ import net.runelite.api.KeyCode;
 import net.runelite.api.MenuAction;
 import net.runelite.api.NPC;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.widgets.Widget;
 import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.GameStateChanged;
@@ -41,7 +43,7 @@ import net.runelite.client.util.Text;
 )
 public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 {
-	private static final int INSPECTION_RESULT_TIMEOUT_TICKS = 8;
+	private static final int INSPECTION_RESULT_TIMEOUT_TICKS = 16;
 
 	private enum ObservationSource
 	{
@@ -169,14 +171,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			return;
 		}
 
-		String rawMenuTarget = event.getMenuTarget();
-		if (rawMenuTarget == null)
-		{
-			return;
-		}
-
-		String menuTarget = Text.removeTags(rawMenuTarget).toLowerCase(Locale.ENGLISH);
-		if (!menuTarget.contains("monster inspect") && !menuTarget.contains("monster examine"))
+		if (!isMonsterInspectionCast(event))
 		{
 			return;
 		}
@@ -196,6 +191,42 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			? ObservationSource.COMBINED : ObservationSource.MONSTER_INSPECTION;
 		inspectionSampleTick = tick;
 		inspectionDeadlineTick = tick + INSPECTION_RESULT_TIMEOUT_TICKS;
+	}
+
+	private boolean isMonsterInspectionCast(MenuOptionClicked event)
+	{
+		if (containsMonsterInspectionName(event.getMenuOption())
+			|| containsMonsterInspectionName(event.getMenuTarget()))
+		{
+			return true;
+		}
+
+		// Fall back to the selected spell itself in case the menu text omits it.
+		return widgetHasMonsterInspectionName(event.getWidget())
+			|| widgetHasMonsterInspectionName(client.getSelectedWidget());
+	}
+
+	private static boolean widgetHasMonsterInspectionName(Widget widget)
+	{
+		if (widget == null)
+		{
+			return false;
+		}
+		int id = widget.getId();
+		return id == InterfaceID.MagicSpellbook.MONSTER_EXAMINE
+			|| id == InterfaceID.MagicSpellbook.MONSTER_INSPECT
+			|| containsMonsterInspectionName(widget.getName());
+	}
+
+	private static boolean containsMonsterInspectionName(String text)
+	{
+		if (text == null)
+		{
+			return false;
+		}
+
+		String normalised = Text.removeTags(text).toLowerCase(Locale.ENGLISH);
+		return normalised.contains("monster inspect") || normalised.contains("monster examine");
 	}
 
 	@Subscribe
@@ -723,6 +754,11 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	boolean isUsingMonsterInspection()
 	{
 		return lastInspectedHitpoints >= 0 || inspectionSampleTick >= 0;
+	}
+
+	boolean isInspectionPending()
+	{
+		return inspectionSampleTick >= 0;
 	}
 
 	NPC getTarget()

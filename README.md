@@ -53,5 +53,5 @@ a stale panel cannot establish an exact heal tick.
 - regeneration and respawn countdowns
 - selected NPC and respawn-tile highlights
 - current and maximum Hitpoints
-- inspected Defence
+- inspected Hitpoints and Defence from the latest result (shown by default)
 - estimated time until full health

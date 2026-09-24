@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Read the Monster Inspect/Examine result panel even when its title is
+  truncated ("Deranged archaeologi...") or carries a combat level, and read
+  the panel widgets directly (label and value may be separate widgets).
+- Recognise the cast from the spellbook widget as well as the menu text, and
+  wait up to 16 ticks for the result. Inspected Hitpoints and Defence are now
+  shown by default, with a "Waiting for Inspect/Examine result" status.
+
 - Reject wide interval midpoints as learned rates and avoid learning skipped
   regeneration cycles as one long interval.
 - Preserve compatible phase information across uniquely matched later cycles.

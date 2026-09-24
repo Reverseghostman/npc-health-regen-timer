@@ -118,6 +118,8 @@ final class NpcHealthRegenOverlay extends OverlayPanel
 			}
 			String status = timer.getState() == RegenTimer.State.WAITING_FOR_RESPAWN
 				? "Waiting for respawn"
+				: plugin.isInspectionPending()
+					? "Waiting for Inspect/Examine result"
 				: plugin.isUsingMonsterInspection()
 					? "Cast Inspect/Examine again"
 					: "Keep splashing to find regen";
