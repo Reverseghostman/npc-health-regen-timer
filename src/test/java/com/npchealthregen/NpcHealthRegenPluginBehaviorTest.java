@@ -17,6 +17,7 @@ import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.NpcSpawned;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.Keybind;
@@ -166,6 +167,91 @@ public class NpcHealthRegenPluginBehaviorTest
 	}
 
 	@Test
+	public void castOnCurrentNpcIsRecognisedFromSelectedSpellWidget() throws Exception
+	{
+		Client client = mock(Client.class);
+		when(client.getWidgetRoots()).thenReturn(new Widget[0]);
+		set("client", client);
+
+		castInspection(target);
+
+		assertTrue(plugin.isUsingMonsterInspection());
+	}
+
+	@Test
+	public void castIsRecognisedFromLiveMenuTargetWithoutSelectedWidget() throws Exception
+	{
+		Client client = mock(Client.class);
+		when(client.getWidgetRoots()).thenReturn(new Widget[0]);
+		set("client", client);
+
+		castWithMenu(target, "Cast",
+			"<col=00ff00>Monster Inspect</col><col=ffffff> -> <col=ffff00>Goblin<col=ff00>  (level-2)", null);
+
+		assertTrue(plugin.isUsingMonsterInspection());
+	}
+
+	@Test
+	public void castIsRecognisedFromSpellbookWidgetId() throws Exception
+	{
+		Client client = mock(Client.class);
+		when(client.getWidgetRoots()).thenReturn(new Widget[0]);
+		set("client", client);
+		Widget spell = mock(Widget.class);
+		when(spell.getId()).thenReturn(InterfaceID.MagicSpellbook.MONSTER_INSPECT);
+
+		castWithMenu(target, "Cast", "<col=ffff00>Goblin", spell);
+
+		assertTrue(plugin.isUsingMonsterInspection());
+	}
+
+	@Test
+	public void truncatedResultPanelTitleIsRead() throws Exception
+	{
+		// Reproduces the live panel: the title is cut to "Deranged archaeologi..."
+		// and each stat line is its own widget under the stats container.
+		Client client = mock(Client.class);
+		set("client", client);
+		NPC archaeologist = npc(1, 42);
+		when(archaeologist.getName()).thenReturn("Deranged archaeologist");
+		when(archaeologist.getHealthRatio()).thenReturn(-1);
+		select(archaeologist);
+		castWithMenu(archaeologist, "Cast",
+			"<col=00ff00>Monster Inspect</col><col=ffffff> -> <col=ffff00>Deranged archaeologist", null);
+
+		Widget title = mock(Widget.class);
+		when(title.getText()).thenReturn("Deranged archaeologi...");
+		String[] text = {"Stats", "Combat level: 276", "Hitpoints: 197", "Attack: 266", "Defence: 48",
+			"Strength: 152", "Magic: 1", "Ranged: 320"};
+		Widget[] lines = new Widget[text.length];
+		for (int i = 0; i < lines.length; i++)
+		{
+			lines[i] = mock(Widget.class);
+			when(lines[i].getText()).thenReturn(text[i]);
+		}
+		Widget stats = mock(Widget.class);
+		when(stats.getDynamicChildren()).thenReturn(lines);
+		when(client.getWidget(InterfaceID.DreamMonsterStat.MONSTER_NAME)).thenReturn(title);
+		when(client.getWidget(InterfaceID.DreamMonsterStat.MONSTER_STATS)).thenReturn(stats);
+		plugin.onClientTick(new ClientTick());
+
+		assertEquals(197, plugin.getLastInspectedHitpoints());
+		assertEquals(48, plugin.getLastInspectedDefence());
+		assertFalse(plugin.isInspectionPending());
+	}
+
+	@Test
+	public void unrelatedTargetedSpellDoesNotStartInspection() throws Exception
+	{
+		Client client = mock(Client.class);
+		set("client", client);
+
+		castSpellOn(target, "Cast Fire Strike");
+
+		assertFalse(plugin.isUsingMonsterInspection());
+	}
+
+	@Test
 	public void shiftRightClickOnCurrentTargetOffersClearInsteadOfSelect() throws Exception
 	{
 		Consumer<MenuEntry> onClick = captureMenuClick(target);
@@ -298,14 +384,31 @@ public class NpcHealthRegenPluginBehaviorTest
 		assertEquals(6, plugin.getLastInspectedHitpoints());
 	}
 
-	private void castInspection(NPC npc)
+	private void castInspection(NPC npc) throws Exception
 	{
+		castSpellOn(npc, "Cast Monster Examine");
+	}
+
+	private void castSpellOn(NPC npc, String spellName) throws Exception
+	{
+		Widget selectedSpell = mock(Widget.class);
+		when(selectedSpell.getName()).thenReturn(spellName);
+		castWithMenu(npc, "Cast", "<col=00ff00>Goblin</col>", selectedSpell);
+	}
+
+	private void castWithMenu(NPC npc, String option, String menuTarget, Widget selectedSpell) throws Exception
+	{
+		Client client = (Client) get("client");
+		when(client.getSelectedWidget()).thenReturn(selectedSpell);
+
 		MenuOptionClicked event = mock(MenuOptionClicked.class);
 		MenuEntry entry = mock(MenuEntry.class);
 		when(entry.getNpc()).thenReturn(npc);
 		when(event.getMenuEntry()).thenReturn(entry);
 		when(event.getMenuAction()).thenReturn(MenuAction.WIDGET_TARGET_ON_NPC);
-		when(event.getMenuTarget()).thenReturn("<col=00ff00>Monster Inspect</col> -> Goblin");
+		when(event.getWidget()).thenReturn(selectedSpell);
+		when(event.getMenuOption()).thenReturn(option);
+		when(event.getMenuTarget()).thenReturn(menuTarget);
 		plugin.onMenuOptionClicked(event);
 	}
 
@@ -392,5 +495,12 @@ public class NpcHealthRegenPluginBehaviorTest
 		Field field = NpcHealthRegenPlugin.class.getDeclaredField(name);
 		field.setAccessible(true);
 		field.set(plugin, value);
+	}
+
+	private Object get(String name) throws Exception
+	{
+		Field field = NpcHealthRegenPlugin.class.getDeclaredField(name);
+		field.setAccessible(true);
+		return field.get(plugin);
 	}
 }
