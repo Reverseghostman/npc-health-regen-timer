@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.2
 
 - Read the Monster Inspect/Examine result panel even when its title is
   truncated ("Deranged archaeologi...") or carries a combat level, and read
