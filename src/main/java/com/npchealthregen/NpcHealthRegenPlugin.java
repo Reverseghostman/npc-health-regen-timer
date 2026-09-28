@@ -96,6 +96,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	private int lastTargetSize = 1;
 	private long tick;
 	private boolean deathHandled;
+	private boolean deathTickReliable;
 	private int activeRegenTicks = 100;
 	private int activeRespawnTicks;
 	private boolean learnedRegen;
@@ -408,7 +409,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	{
 		if (event.getActor() == target)
 		{
-			handleTargetDeath();
+			handleTargetDeath(true);
 		}
 	}
 
@@ -423,7 +424,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 
 		if (event.getNpc().getHealthRatio() == 0)
 		{
-			handleTargetDeath();
+			handleTargetDeath(false);
 		}
 		else
 		{
@@ -441,13 +442,25 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			return;
 		}
 
+		// The client only sees a respawn once the NPC is in view, so a sighting can
+		// be late but never early. Respawn times are fixed, so the shortest reliable
+		// measurement is the real one and anything longer was a late sighting.
+		int knownRespawnTicks = learnedRespawn ? activeRespawnTicks : 0;
+		int measuredRespawnTicks = timer.onRespawn(tick, knownRespawnTicks);
+		boolean lateSighting = knownRespawnTicks > 0 && measuredRespawnTicks > knownRespawnTicks;
+
 		target = npc;
 		targetNpcIndex = npc.getIndex();
-		lastTargetPoint = observedSpawnPoints.get(npc);
+		if (!lateSighting)
+		{
+			// A late sighting is wherever the NPC had walked to, not its spawn tile.
+			lastTargetPoint = observedSpawnPoints.get(npc);
+		}
 		deathHandled = false;
 		resetObservationSource();
-		int measuredRespawnTicks = timer.onRespawn(tick);
-		if (measuredRespawnTicks > 0 && config.learnNpcTimings())
+		// A death only noticed at despawn was recorded late, so its time is too short.
+		if (measuredRespawnTicks > 0 && deathTickReliable && config.learnNpcTimings()
+			&& (knownRespawnTicks <= 0 || measuredRespawnTicks < knownRespawnTicks))
 		{
 			activeRespawnTicks = measuredRespawnTicks;
 			learnedRespawn = true;
@@ -584,7 +597,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		}
 	}
 
-	private void handleTargetDeath()
+	private void handleTargetDeath(boolean deathTickReliable)
 	{
 		if (deathHandled)
 		{
@@ -592,6 +605,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		}
 
 		deathHandled = true;
+		this.deathTickReliable = deathTickReliable;
 		target = null;
 		resetObservationSource();
 		timer.onDeath(tick, activeRespawnTicks);

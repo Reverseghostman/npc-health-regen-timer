@@ -13,6 +13,9 @@ Hold **Shift** and right-click the currently tracked NPC again to select
 
 The default regeneration interval is 100 game ticks (60 seconds). Learned
 regeneration and respawn times are saved locally for each NPC type.
+The shortest observed respawn is kept: the client only sees a respawn once the
+NPC is within view, so stay near its spawn point for at least one kill.
+While it is dead the regen countdown pauses for that respawn time.
 
 If a 1 HP heal does not change the health bar, set the **Mark regeneration now**
 hotkey and press it when the heal occurs.

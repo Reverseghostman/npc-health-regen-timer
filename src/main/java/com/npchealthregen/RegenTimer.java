@@ -259,6 +259,17 @@ final class RegenTimer
 
 	int onRespawn(long tick)
 	{
+		return onRespawn(tick, 0);
+	}
+
+	/**
+	 * @param knownRespawnTicks a trusted respawn time, or 0. The client only
+	 * sees a respawn once the NPC is in view, so a longer measurement is a late
+	 * sighting and must not shift the regen phase past the known dead time.
+	 * @return the measured death-to-sighting ticks
+	 */
+	int onRespawn(long tick, int knownRespawnTicks)
+	{
 		if (state != State.WAITING_FOR_RESPAWN)
 		{
 			return 0;
@@ -266,7 +277,8 @@ final class RegenTimer
 
 		long measured = Math.max(0, tick - deathTick);
 		int actualRespawnTicks = measured > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) measured;
-		int correction = actualRespawnTicks - appliedRespawnTicks;
+		int deadTicks = knownRespawnTicks > 0 ? Math.min(actualRespawnTicks, knownRespawnTicks) : actualRespawnTicks;
+		int correction = deadTicks - appliedRespawnTicks;
 		if (windowStartTick >= 0)
 		{
 			windowStartTick += correction;

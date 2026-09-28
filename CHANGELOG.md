@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.3
+
+- Fix the regen countdown drifting 5-15 ticks after some kills. A respawn is
+  only seen once the NPC is in view, so a late sighting (after it walked into
+  range) was counted as extra dead time, shifting the regen phase and
+  relearning a too-long respawn. The shortest measured respawn is now kept and
+  longer sightings no longer shift the phase or move the respawn tile.
+- Do not learn a respawn time from a death only noticed at despawn.
+
 ## 0.9.2
 
 - Read the Monster Inspect/Examine result panel even when its title is
