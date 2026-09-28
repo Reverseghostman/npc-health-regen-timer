@@ -16,6 +16,7 @@ import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.MenuEntryAdded;
+import net.runelite.api.events.NpcDespawned;
 import net.runelite.api.events.NpcSpawned;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
@@ -72,6 +73,47 @@ public class NpcHealthRegenPluginBehaviorTest
 		plugin.onNpcSpawned(new NpcSpawned(respawn));
 		assertSame(respawn, plugin.getTarget());
 		assertEquals(20, plugin.getActiveRespawnTicks());
+	}
+
+	@Test
+	public void lateRespawnSightingIsNotLearnedAndShorterOneIs() throws Exception
+	{
+		kill();
+		set("tick", 20L);
+		NPC first = npc(1, 42);
+		plugin.onNpcSpawned(new NpcSpawned(first));
+		assertEquals(20, plugin.getActiveRespawnTicks());
+
+		// Walked into view 15 ticks after it really respawned.
+		set("tick", 100L);
+		plugin.onActorDeath(new ActorDeath(first));
+		set("tick", 135L);
+		NPC late = npc(1, 42);
+		when(late.getWorldLocation()).thenReturn(new WorldPoint(3210, 3200, 0));
+		plugin.onNpcSpawned(new NpcSpawned(late));
+		assertSame(late, plugin.getTarget());
+		assertEquals(20, plugin.getActiveRespawnTicks());
+		verify(profiles, never()).save(anyInt(), anyInt(), eq(35));
+		assertEquals(new WorldPoint(3200, 3200, 0), plugin.getLastTargetPoint());
+
+		// A quicker sighting means the saved time was itself late.
+		set("tick", 200L);
+		plugin.onActorDeath(new ActorDeath(late));
+		set("tick", 218L);
+		plugin.onNpcSpawned(new NpcSpawned(npc(1, 42)));
+		assertEquals(18, plugin.getActiveRespawnTicks());
+	}
+
+	@Test
+	public void deathOnlySeenAtDespawnIsNotLearnedAsRespawn() throws Exception
+	{
+		when(target.getHealthRatio()).thenReturn(0);
+		set("tick", 5L);
+		plugin.onNpcDespawned(new NpcDespawned(target));
+		set("tick", 20L);
+		plugin.onNpcSpawned(new NpcSpawned(npc(1, 42)));
+
+		verify(profiles, never()).save(anyInt(), anyInt(), eq(15));
 	}
 
 	@Test

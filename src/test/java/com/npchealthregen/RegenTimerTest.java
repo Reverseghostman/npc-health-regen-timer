@@ -282,6 +282,31 @@ public class RegenTimerTest
 	}
 
 	@Test
+	public void lateRespawnSightingDoesNotShiftPhasePastKnownRespawn()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.markNow(50);
+		timer.onDeath(80, 20);
+
+		// Seen 10 ticks after the known 20-tick respawn: it walked into view.
+		assertEquals(30, timer.onRespawn(110, 20));
+
+		// Next heal: 150 + 20 dead ticks = 170, not 180.
+		assertEquals(60, timer.getUpcomingWindow(110, 100).getEarliestTicks());
+	}
+
+	@Test
+	public void quickerRespawnThanKnownStillCorrectsPhase()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.markNow(50);
+		timer.onDeath(80, 25);
+
+		assertEquals(20, timer.onRespawn(100, 25));
+		assertEquals(70, timer.getUpcomingWindow(100, 100).getEarliestTicks());
+	}
+
+	@Test
 	public void lateExpectedRespawnValueUpdatesCurrentCountdownAndPhase()
 	{
 		RegenTimer timer = new RegenTimer();
