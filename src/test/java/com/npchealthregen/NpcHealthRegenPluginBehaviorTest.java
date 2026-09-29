@@ -3,6 +3,7 @@ package com.npchealthregen;
 import java.awt.event.KeyEvent;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.function.Consumer;
 import net.runelite.api.Client;
 import net.runelite.api.EquipmentInventorySlot;
@@ -38,6 +39,8 @@ import net.runelite.client.game.NPCManager;
 import net.runelite.client.party.PartyMember;
 import net.runelite.client.party.PartyService;
 import net.runelite.client.party.WSClient;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginManager;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
@@ -330,12 +333,218 @@ public class NpcHealthRegenPluginBehaviorTest
 
 	private static void wearVenomSetup(Client client)
 	{
+		wear(client, ItemID.SERPENTINE_HELM_CHARGED, ItemID.TOXIC_TOTS_CHARGED);
+	}
+
+	/** @param helm the worn head item, or null for none */
+	private static void wear(Client client, Integer helm, int weapon)
+	{
 		ItemContainer worn = mock(ItemContainer.class);
 		when(worn.getItem(EquipmentInventorySlot.HEAD.getSlotIdx()))
-			.thenReturn(new Item(ItemID.SERPENTINE_HELM_CHARGED, 1));
+			.thenReturn(helm == null ? null : new Item(helm, 1));
 		when(worn.getItem(EquipmentInventorySlot.WEAPON.getSlotIdx()))
-			.thenReturn(new Item(ItemID.TOXIC_TOTS_CHARGED, 1));
+			.thenReturn(new Item(weapon, 1));
 		when(client.getItemContainer(InventoryID.WORN)).thenReturn(worn);
+	}
+
+	@Test
+	public void aMissOrSplashOfZeroStartsNoRingButALandedHitDoes() throws Exception
+	{
+		Client client = joinParty(301);
+		when(config.showVenomRing()).thenReturn(true);
+		when(config.shareWithParty()).thenReturn(true);
+		wearVenomSetup(client);
+		select(target);
+		plugin.getTimer().markNow(90, 100);
+		set("tick", 185L);
+
+		// A failed accuracy roll shows 0; only a landed hit (always at least 1) can envenom.
+		hit(target, HitsplatID.BLOCK_ME, 0, true);
+
+		assertEquals(VenomRing.Status.NONE, plugin.getVenomRing().getStatus());
+		verify(partyService, never()).send(any());
+
+		hit(target, HitsplatID.DAMAGE_ME, 1, true);
+
+		assertEquals(VenomRing.Status.COUNTING, plugin.getVenomRing().getStatus());
+	}
+
+	@Test
+	public void toxicBlowpipeAndToxicStaffWithTheHelmAlsoStartTheRing() throws Exception
+	{
+		Client client = joinParty(301);
+		when(config.showVenomRing()).thenReturn(true);
+		plugin.getTimer().markNow(90, 100);
+
+		wear(client, ItemID.SERPENTINE_HELM_CHARGED_RED, ItemID.TOXIC_BLOWPIPE_LOADED);
+		set("tick", 185L);
+		hit(target, HitsplatID.DAMAGE_ME, 3, true);
+		assertEquals(VenomRing.Status.COUNTING, plugin.getVenomRing().getStatus());
+
+		select(target);
+		plugin.getTimer().markNow(90, 100);
+		wear(client, ItemID.SERPENTINE_HELM_CHARGED_CYAN, ItemID.TOXIC_SOTD_CHARGED);
+		set("tick", 185L);
+		hit(target, HitsplatID.DAMAGE_ME, 3, true);
+		assertEquals(VenomRing.Status.COUNTING, plugin.getVenomRing().getStatus());
+	}
+
+	@Test
+	public void noxiousHalberdIsOnlyFiftyPercentEvenWithTheHelmSoStartsNoRing() throws Exception
+	{
+		Client client = joinParty(301);
+		when(config.showVenomRing()).thenReturn(true);
+		wear(client, ItemID.SERPENTINE_HELM_CHARGED, ItemID.NOXIOUS_HALBERD);
+		plugin.getTimer().markNow(90, 100);
+		set("tick", 185L);
+
+		hit(target, HitsplatID.DAMAGE_ME, 5, true);
+
+		assertEquals(VenomRing.Status.NONE, plugin.getVenomRing().getStatus());
+		assertEquals(50, plugin.getVenomSetup().getPercent());
+		assertFalse(plugin.getVenomSetup().isGuaranteed());
+	}
+
+	@Test
+	public void toxicWeaponWithoutTheHelmIsATwentyFivePercentChanceAndStartsNoRing() throws Exception
+	{
+		Client client = joinParty(301);
+		when(config.showVenomRing()).thenReturn(true);
+		wear(client, null, ItemID.TOXIC_TOTS_CHARGED);
+		plugin.getTimer().markNow(90, 100);
+		set("tick", 185L);
+
+		hit(target, HitsplatID.DAMAGE_ME, 2, true);
+
+		assertEquals(VenomRing.Status.NONE, plugin.getVenomRing().getStatus());
+		assertEquals("25% (no helm)", plugin.getVenomSetup().describe());
+	}
+
+	@Test
+	public void venomChanceFollowsTheWornGearEachTick() throws Exception
+	{
+		Client client = mock(Client.class);
+		set("client", client);
+
+		wear(client, null, ItemID.TOXIC_BLOWPIPE_LOADED);
+		plugin.onGameTick(new GameTick());
+		assertEquals(25, plugin.getVenomSetup().getPercent());
+
+		wear(client, ItemID.SERPENTINE_HELM_CHARGED_CYAN, ItemID.TOXIC_BLOWPIPE_LOADED);
+		plugin.onGameTick(new GameTick());
+		assertEquals(100, plugin.getVenomSetup().getPercent());
+		assertTrue(plugin.getVenomSetup().isGuaranteed());
+
+		// An abyssal whip is not a venom weapon.
+		wear(client, ItemID.SERPENTINE_HELM_CHARGED, 4151);
+		plugin.onGameTick(new GameTick());
+		assertNull(plugin.getVenomSetup());
+	}
+
+	@Test
+	public void automaticPlacementMovesBesideTheNpcWhileAnotherOverheadPluginIsEnabled() throws Exception
+	{
+		PluginManager manager = mock(PluginManager.class);
+		Plugin dynamite = mock(Plugin.class);
+		when(dynamite.getName()).thenReturn("Poison Dynamite");
+		Plugin unrelated = mock(Plugin.class);
+		when(unrelated.getName()).thenReturn("Some Other Plugin");
+		when(manager.getPlugins()).thenReturn(Arrays.asList(unrelated, dynamite));
+		set("pluginManager", manager);
+		when(config.overheadPlacement()).thenReturn(NpcHealthRegenConfig.OverheadPlacement.AUTO);
+
+		when(manager.isPluginEnabled(unrelated)).thenReturn(true);
+		when(manager.isPluginEnabled(dynamite)).thenReturn(false);
+		plugin.onGameTick(new GameTick());
+		assertEquals(OverheadLayout.Placement.ABOVE, plugin.getOverheadPlacement());
+
+		when(manager.isPluginEnabled(dynamite)).thenReturn(true);
+		plugin.onGameTick(new GameTick());
+		assertEquals(OverheadLayout.Placement.RIGHT, plugin.getOverheadPlacement());
+
+		when(manager.isPluginEnabled(dynamite)).thenReturn(false);
+		plugin.onGameTick(new GameTick());
+		assertEquals(OverheadLayout.Placement.ABOVE, plugin.getOverheadPlacement());
+	}
+
+	@Test
+	public void eachKnownOverheadPluginTriggersAutomaticPlacement() throws Exception
+	{
+		when(config.overheadPlacement()).thenReturn(NpcHealthRegenConfig.OverheadPlacement.AUTO);
+		for (String name : new String[]{"Poison Dynamite", "Poisoned NPCs", "Venom Timer"})
+		{
+			PluginManager manager = mock(PluginManager.class);
+			Plugin other = mock(Plugin.class);
+			when(other.getName()).thenReturn(name);
+			when(manager.getPlugins()).thenReturn(Arrays.asList(other));
+			when(manager.isPluginEnabled(other)).thenReturn(true);
+			set("pluginManager", manager);
+
+			plugin.onGameTick(new GameTick());
+
+			assertEquals(name, OverheadLayout.Placement.RIGHT, plugin.getOverheadPlacement());
+		}
+	}
+
+	@Test
+	public void explicitPlacementIgnoresOtherPluginsAndSkipsTheirLookup() throws Exception
+	{
+		PluginManager manager = mock(PluginManager.class);
+		Plugin dynamite = mock(Plugin.class);
+		when(dynamite.getName()).thenReturn("Poison Dynamite");
+		when(manager.getPlugins()).thenReturn(Arrays.asList(dynamite));
+		when(manager.isPluginEnabled(dynamite)).thenReturn(true);
+		set("pluginManager", manager);
+
+		when(config.overheadPlacement()).thenReturn(NpcHealthRegenConfig.OverheadPlacement.ABOVE);
+		plugin.onGameTick(new GameTick());
+		assertEquals(OverheadLayout.Placement.ABOVE, plugin.getOverheadPlacement());
+		verify(manager, never()).getPlugins();
+
+		when(config.overheadPlacement()).thenReturn(NpcHealthRegenConfig.OverheadPlacement.LEFT);
+		assertEquals(OverheadLayout.Placement.LEFT, plugin.getOverheadPlacement());
+		when(config.overheadPlacement()).thenReturn(NpcHealthRegenConfig.OverheadPlacement.RIGHT);
+		assertEquals(OverheadLayout.Placement.RIGHT, plugin.getOverheadPlacement());
+	}
+
+	@Test
+	public void measuredDynamiteDelayDoesNotOutliveTheTargetOrAHandSetDelay() throws Exception
+	{
+		Client client = mock(Client.class);
+		set("client", client);
+		when(config.dynamiteDelayTicks()).thenReturn(5);
+		measureDynamiteDelay(client, 4);
+		assertEquals(4, plugin.getDynamiteDelayTicks());
+
+		// A different NPC is usually a different distance away.
+		select(npc(1, 99));
+		assertEquals(5, plugin.getDynamiteDelayTicks());
+
+		// Setting the delay by hand replaces what was measured.
+		measureDynamiteDelay(client, 3);
+		assertEquals(3, plugin.getDynamiteDelayTicks());
+		ConfigChanged changed = new ConfigChanged();
+		changed.setGroup(NpcHealthRegenConfig.GROUP);
+		changed.setKey("dynamiteDelayTicks");
+		plugin.onConfigChanged(changed);
+		assertEquals(5, plugin.getDynamiteDelayTicks());
+	}
+
+	/** Uses poison dynamite on the target and has it land {@code delay} ticks later. */
+	private void measureDynamiteDelay(Client client, int delay) throws Exception
+	{
+		Widget dynamite = mock(Widget.class);
+		when(dynamite.getItemId()).thenReturn(ItemID.LOVAKENGJ_DYNAMITE_POISON);
+		when(client.getSelectedWidget()).thenReturn(dynamite);
+		MenuOptionClicked use = mock(MenuOptionClicked.class);
+		MenuEntry entry = mock(MenuEntry.class);
+		when(entry.getNpc()).thenReturn(plugin.getTarget());
+		when(use.getMenuEntry()).thenReturn(entry);
+		when(use.getMenuAction()).thenReturn(MenuAction.WIDGET_TARGET_ON_NPC);
+		set("tick", 100L);
+		plugin.onMenuOptionClicked(use);
+		set("tick", 100L + delay);
+		hit(plugin.getTarget(), HitsplatID.DAMAGE_ME, 3, true);
 	}
 
 	private void hit(NPC npc, int type, int amount, boolean mine)

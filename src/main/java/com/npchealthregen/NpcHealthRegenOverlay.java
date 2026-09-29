@@ -25,8 +25,8 @@ final class NpcHealthRegenOverlay extends OverlayPanel
 		super(plugin);
 		this.plugin = plugin;
 		this.config = config;
+		// Default priority: panels from other plugins in this corner keep their order.
 		setPosition(OverlayPosition.TOP_LEFT);
-		setPriority(PRIORITY_HIGH);
 	}
 
 	@Override
@@ -50,6 +50,7 @@ final class NpcHealthRegenOverlay extends OverlayPanel
 		{
 			addLine("Target", "Out of view (timer kept)", WARNING);
 		}
+		addVenomChanceLine();
 		addVenomLines();
 		String partySource = plugin.getPartySourceName();
 		if (config.showPartySource() && partySource != null)
@@ -159,6 +160,18 @@ final class NpcHealthRegenOverlay extends OverlayPanel
 		}
 
 		return super.render(graphics);
+	}
+
+	/** Your chance to envenom the NPC with the venom weapon and serpentine helm you are wearing. */
+	private void addVenomChanceLine()
+	{
+		VenomChance.Setup setup = plugin.getVenomSetup();
+		if (!config.showVenomChance() || setup == null)
+		{
+			return;
+		}
+
+		addLine("Venom chance", setup.describe(), setup.isGuaranteed() ? LEARNED : WARNING);
 	}
 
 	private void addVenomLines()

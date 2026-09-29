@@ -3,6 +3,7 @@ package com.npchealthregen;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
+import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.Polygon;
 import java.awt.Shape;
@@ -25,6 +26,8 @@ final class NpcHealthRegenSceneOverlay extends Overlay
 	private static final Color VENOM_GREEN = new Color(60, 200, 90);
 	private static final Color LATE_RED = new Color(230, 60, 60);
 	private static final int RING_DIAMETER = 24;
+	// Model units above the NPC's head where the overhead text is anchored, as plugins usually do.
+	private static final int OVERHEAD_HEIGHT = 40;
 	private static final Color RESPAWN_FILL = new Color(255, 170, 0, 35);
 	private static final Color TEXT = Color.WHITE;
 
@@ -72,60 +75,69 @@ final class NpcHealthRegenSceneOverlay extends Overlay
 			renderShape(graphics, highlight, border, fill);
 		}
 
-		renderVenomRing(graphics, target);
-
-		if (!config.showOverheadRegenCountdown())
-		{
-			return;
-		}
-
-		RegenTimer.Window window = plugin.getTimer().getUpcomingWindow(
-			plugin.getTick(), plugin.getActiveRegenTicks());
-		if (window == null)
-		{
-			return;
-		}
-
-		String text = formatRegenCountdown(window);
-		Point location = target.getCanvasTextLocation(
-			graphics, text, target.getLogicalHeight() + 40);
-		if (location != null)
-		{
-			Color colour = window.getEarliestTicks() <= config.warningTicks()
-				? WARNING : TEXT;
-			OverlayUtil.renderTextLocation(graphics, location, text, colour);
-		}
+		renderOverhead(graphics, target);
 	}
 
-	private void renderVenomRing(Graphics2D graphics, NPC target)
+	/**
+	 * The regen countdown, and above it the venom label and ring, stacked in pixels from one anchor
+	 * so they cannot overlap each other. Beside the NPC (see OverheadLayout) they also stay clear of
+	 * other plugins that draw above its head.
+	 */
+	private void renderOverhead(Graphics2D graphics, NPC target)
 	{
+		String regenText = null;
+		Color regenColour = TEXT;
+		if (config.showOverheadRegenCountdown())
+		{
+			RegenTimer.Window window = plugin.getTimer().getUpcomingWindow(
+				plugin.getTick(), plugin.getActiveRegenTicks());
+			if (window != null)
+			{
+				regenText = formatRegenCountdown(window);
+				regenColour = window.getEarliestTicks() <= config.warningTicks() ? WARNING : TEXT;
+			}
+		}
+
 		VenomRing ring = plugin.getVenomRing();
-		if (!config.showVenomRing() || ring.getStatus() == VenomRing.Status.NONE)
+		RingState venom = config.showVenomRing() && ring.getStatus() != VenomRing.Status.NONE
+			? ringState(ring, plugin.getTick(), plugin.getDynamiteDelayTicks()) : null;
+		if (regenText == null && venom == null)
 		{
 			return;
 		}
 
-		// Above the overhead regen countdown.
-		Point centre = target.getCanvasTextLocation(graphics, "", target.getLogicalHeight() + 110);
-		if (centre == null)
+		Point anchor = target.getCanvasTextLocation(
+			graphics, "", target.getLogicalHeight() + OVERHEAD_HEIGHT);
+		if (anchor == null)
 		{
 			return;
 		}
 
-		RingState state = ringState(ring, plugin.getTick(), plugin.getDynamiteDelayTicks());
-		ProgressPieComponent pie = new ProgressPieComponent();
-		pie.setPosition(centre);
-		pie.setDiameter(RING_DIAMETER);
-		pie.setProgress(state.progress);
-		pie.setBorderColor(state.colour);
-		pie.setFill(new Color(state.colour.getRed(), state.colour.getGreen(), state.colour.getBlue(), 110));
-		pie.render(graphics);
+		FontMetrics metrics = graphics.getFontMetrics();
+		OverheadLayout.Layout layout = OverheadLayout.layout(anchor.getX(), anchor.getY(),
+			plugin.getOverheadPlacement(), config.overheadSideOffset(),
+			metrics.getAscent(), metrics.getDescent(),
+			regenText == null ? 0 : metrics.stringWidth(regenText),
+			venom == null ? 0 : RING_DIAMETER,
+			venom == null ? 0 : metrics.stringWidth(venom.label));
 
-		int textWidth = graphics.getFontMetrics().stringWidth(state.label);
-		int textHeight = graphics.getFontMetrics().getAscent();
-		OverlayUtil.renderTextLocation(graphics,
-			new Point(centre.getX() - textWidth / 2, centre.getY() + RING_DIAMETER / 2 + textHeight + 2),
-			state.label, state.colour);
+		if (regenText != null)
+		{
+			OverlayUtil.renderTextLocation(graphics,
+				new Point(layout.regenX, layout.regenBaselineY), regenText, regenColour);
+		}
+		if (venom != null)
+		{
+			ProgressPieComponent pie = new ProgressPieComponent();
+			pie.setPosition(new Point(layout.ringCentreX, layout.ringCentreY));
+			pie.setDiameter(RING_DIAMETER);
+			pie.setProgress(venom.progress);
+			pie.setBorderColor(venom.colour);
+			pie.setFill(new Color(venom.colour.getRed(), venom.colour.getGreen(), venom.colour.getBlue(), 110));
+			pie.render(graphics);
+			OverlayUtil.renderTextLocation(graphics,
+				new Point(layout.labelX, layout.labelBaselineY), venom.label, venom.colour);
+		}
 	}
 
 	static final class RingState
