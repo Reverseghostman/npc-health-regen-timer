@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.9.8
+
+- Fix a shared party timer staying tens of ticks wrong on an account that lost
+  sight of the NPC and came back. The account that stayed saw the NPC die and
+  respawn, which moves the regen timing by the time it was dead; the account
+  that left carried on the old timing, and then ignored the correct window from
+  the party because it disagreed with its own. A timer carried on through time
+  out of sight (NPC out of view, logged out, or a respawn seen late) is now
+  treated as unconfirmed: a party member who was watching replaces it, and a
+  heal you see yourself confirms it. Your own observations still take priority.
+- Accept party windows while the NPC is out of view, so the timer is already
+  right when you come back. Not while logged out, because no ticks arrive then
+  to place the window in time; the next one after login corrects it.
+- A party timer that is itself unconfirmed says so (a new flag on the shared
+  window, unset by older versions), so two accounts that were both away do not
+  overwrite each other with a guess.
+- Fix a respawn seen late counting the whole time away as dead time, which put
+  the regen countdown out by that time and taught a too-long respawn time. This
+  happened whenever the NPC respawned while you were more than 15 tiles from its
+  spawn tile or on another plane (a respawn during a logout was already handled).
+  The countdown now uses the NPC's respawn time if known, widened by two ticks
+  either side because kills of one NPC type can respawn a tick or two apart (this
+  also covers a respawn during a logout, which could be a tick or two out).
+  Otherwise it widens to say the timing is unknown. No respawn time is learned
+  from such a sighting.
+
 ## 0.9.7
 
 - Show your venom chance in the info panel (new **Venom chance** setting, on by
