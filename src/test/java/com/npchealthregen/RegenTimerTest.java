@@ -453,6 +453,156 @@ public class RegenTimerTest
 	}
 
 	@Test
+	public void sharedWindowReplacesAPhaseCarriedThroughTimeOutOfSight()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleHealth(10, 30, 80, 100, 0);
+		timer.sampleHealth(11, 30, 90, 100, 0);
+		timer.markUnverified();
+
+		// A kill and respawn while out of sight can have moved the phase by any amount; a
+		// member who watched says the next heal is at 150-155.
+		assertTrue(timer.applySharedWindow(150, 155, 100));
+
+		assertTrue(timer.isPhaseFromParty());
+		assertFalse(timer.isUnverified());
+		RegenTimer.Window window = timer.getUpcomingWindow(100, 100);
+		assertEquals(50, window.getEarliestTicks());
+		assertEquals(55, window.getLatestTicks());
+	}
+
+	@Test
+	public void sharedWindowFromAnUnsureMemberDoesNotReplaceACarriedPhase()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleHealth(10, 30, 80, 100, 0);
+		timer.sampleHealth(11, 30, 90, 100, 0);
+		timer.markUnverified();
+
+		assertFalse(timer.applySharedWindow(150, 155, 100, true));
+
+		assertTrue(timer.isUnverified());
+		assertEquals(81, timer.getUpcomingWindow(100, 100).getEarliestTicks());
+	}
+
+	@Test
+	public void sharedWindowThatAgreesNarrowsACarriedPhaseAndVerifiesIt()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleHealth(10, 30, 80, 100, 0);
+		timer.sampleHealth(11, 30, 90, 100, 0);
+		timer.markUnverified();
+
+		assertTrue(timer.applySharedWindow(185, 187, 100));
+
+		assertFalse(timer.isUnverified());
+		RegenTimer.Window window = timer.getUpcomingWindow(100, 100);
+		assertEquals(85, window.getEarliestTicks());
+		assertEquals(87, window.getLatestTicks());
+	}
+
+	@Test
+	public void sharedWindowThatIsNoNarrowerLeavesACarriedPhaseUnverified()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleHealth(10, 30, 80, 100, 0);
+		timer.sampleHealth(11, 30, 90, 100, 0);
+		timer.markUnverified();
+
+		assertFalse(timer.applySharedWindow(180, 195, 100));
+
+		// It agrees but adds nothing, so a later member who disagrees can still correct it.
+		assertTrue(timer.isUnverified());
+	}
+
+	@Test
+	public void ambiguousSharedWindowDoesNotReplaceACarriedPhase()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleHealth(10, 30, 40, 100, 0);
+		timer.sampleHealth(11, 30, 60, 100, 0);
+		timer.markUnverified();
+
+		// 58-145 fits both this cycle's 41-60 and the next cycle's, so it says nothing.
+		assertFalse(timer.applySharedWindow(58, 145, 100));
+
+		assertTrue(timer.isUnverified());
+		assertFalse(timer.isPhaseFromParty());
+	}
+
+	@Test
+	public void adoptingAnUnsureWindowLeavesTheTimerUnsureUntilASureOneArrives()
+	{
+		RegenTimer timer = new RegenTimer();
+
+		assertTrue(timer.applySharedWindow(120, 124, 100, true));
+		assertTrue(timer.isUnverified());
+
+		assertTrue(timer.applySharedWindow(150, 152, 100, false));
+		assertFalse(timer.isUnverified());
+		assertEquals(50, timer.getUpcomingWindow(100, 100).getEarliestTicks());
+	}
+
+	@Test
+	public void anObservedHealVerifiesACarriedPhase()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.markNow(50, 100);
+		timer.markUnverified();
+		assertTrue(timer.isUnverified());
+
+		timer.markNow(150, 100);
+
+		assertFalse(timer.isUnverified());
+	}
+
+	@Test
+	public void aPhaseInDoubtDoesNotTeachTheDeathPause()
+	{
+		RegenTimer sure = new RegenTimer();
+		sure.markNow(50, 100);
+		sure.onDeath(80, 0);
+		sure.onRespawn(100);
+		sure.markNow(168, 100);
+		// The countdown only paused for 18 of the 20 dead ticks.
+		assertTrue(sure.isDeathPauseLearned());
+		assertEquals(2, sure.getDeathPauseAdjustMin());
+
+		RegenTimer doubtful = new RegenTimer();
+		doubtful.markNow(50, 100);
+		doubtful.onDeath(80, 0);
+		doubtful.onRespawn(100);
+		doubtful.markUnverified();
+		doubtful.markNow(168, 100);
+
+		// The same heal would fit, but an anchor carried through time out of sight proves nothing.
+		assertFalse(doubtful.isDeathPauseLearned());
+		assertFalse(doubtful.isUnverified());
+	}
+
+	@Test
+	public void thereIsNothingToDoubtWithoutAPhase()
+	{
+		RegenTimer timer = new RegenTimer();
+
+		timer.markUnverified();
+
+		assertFalse(timer.isUnverified());
+	}
+
+	@Test
+	public void resetClearsTheDoubt()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.markNow(50, 100);
+		timer.markUnverified();
+
+		timer.reset();
+
+		assertFalse(timer.isUnverified());
+	}
+
+	@Test
 	public void sharedWindowIsNotAppliedWhileDead()
 	{
 		RegenTimer timer = new RegenTimer();
