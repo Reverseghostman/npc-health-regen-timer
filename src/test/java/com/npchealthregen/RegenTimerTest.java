@@ -35,6 +35,7 @@ public class RegenTimerTest
 	public void disablingRespawnEstimateClearsCountdownAndCorrectsPhase()
 	{
 		RegenTimer timer = new RegenTimer();
+		timer.setDeathPauseAdjustment(0, 0, true);
 		timer.markNow(50);
 		timer.onDeath(80, 20);
 		timer.updateExpectedRespawnTicks(0);
@@ -256,6 +257,7 @@ public class RegenTimerTest
 	public void deathKeepsOverlayStateAndMeasuredRespawnCorrectsPhase()
 	{
 		RegenTimer timer = new RegenTimer();
+		timer.setDeathPauseAdjustment(0, 0, true);
 		timer.markNow(50);
 		timer.onDeath(80, 20);
 
@@ -282,34 +284,145 @@ public class RegenTimerTest
 	}
 
 	@Test
-	public void lateRespawnSightingDoesNotShiftPhasePastKnownRespawn()
+	public void unlearnedDeathPauseCoversEveryPlausibleAdjustment()
 	{
 		RegenTimer timer = new RegenTimer();
-		timer.markNow(50);
+		timer.markNow(50, 100);
 		timer.onDeath(80, 20);
+		timer.onRespawn(100);
 
-		// Seen 10 ticks after the known 20-tick respawn: it walked into view.
-		assertEquals(30, timer.onRespawn(110, 20));
-
-		// Next heal: 150 + 20 dead ticks = 170, not 180.
-		assertEquals(60, timer.getUpcomingWindow(110, 100).getEarliestTicks());
+		// Paused for 18-20 of the 20 measured dead ticks: next heal at 168-170.
+		RegenTimer.Window window = timer.getUpcomingWindow(100, 100);
+		assertEquals(68, window.getEarliestTicks());
+		assertEquals(70, window.getLatestTicks());
 	}
 
 	@Test
-	public void quickerRespawnThanKnownStillCorrectsPhase()
+	public void learnedDeathPauseKeepsBackToBackKillsFromDrifting()
+	{
+		// Engine model: the countdown runs on the tick after the killing hit and
+		// on the respawn tick, so it pauses 2 ticks less than the measured time.
+		RegenTimer timer = new RegenTimer();
+		timer.markNow(50, 100);
+		timer.onDeath(80, 20);
+		timer.onRespawn(100);
+		timer.markNow(168, 100);
+		assertEquals(2, timer.getDeathPauseAdjustMin());
+		assertEquals(2, timer.getDeathPauseAdjustMax());
+		assertTrue(timer.consumeDeathPauseUpdate());
+		assertFalse(timer.consumeDeathPauseUpdate());
+
+		// Three more kills with no heal observed in between.
+		for (long death = 200; death <= 400; death += 100)
+		{
+			timer.onDeath(death, 20);
+			timer.onRespawn(death + 20);
+		}
+
+		// 168 + 3 * 18 = 222, so the next heal is at 422. Shifting by the full
+		// 20 measured ticks each kill would have predicted 428.
+		RegenTimer.Window window = timer.getUpcomingWindow(420, 100);
+		assertEquals(2, window.getEarliestTicks());
+		assertEquals(2, window.getLatestTicks());
+	}
+
+	@Test
+	public void calibratesAcrossSeveralUnobservedKills()
 	{
 		RegenTimer timer = new RegenTimer();
-		timer.markNow(50);
-		timer.onDeath(80, 25);
+		timer.markNow(50, 100);
+		for (long death = 80; death <= 280; death += 100)
+		{
+			timer.onDeath(death, 20);
+			timer.onRespawn(death + 20);
+		}
+		RegenTimer.Window unlearned = timer.getUpcomingWindow(300, 100);
+		assertEquals(4, unlearned.getEarliestTicks());
+		assertEquals(10, unlearned.getLatestTicks());
 
-		assertEquals(20, timer.onRespawn(100, 25));
-		assertEquals(70, timer.getUpcomingWindow(100, 100).getEarliestTicks());
+		// 50 + 3 * (20 - 2) = 104, seen on the next cycle at 304.
+		timer.markNow(304, 100);
+
+		assertEquals(2, timer.getDeathPauseAdjustMin());
+		assertEquals(2, timer.getDeathPauseAdjustMax());
+	}
+
+	@Test
+	public void contradictingObservationReplacesLearnedDeathPause()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.setDeathPauseAdjustment(2, 2, true);
+		timer.markNow(50, 100);
+		timer.onDeath(80, 20);
+		timer.onRespawn(100);
+
+		timer.markNow(170, 100);
+
+		assertEquals(0, timer.getDeathPauseAdjustMin());
+		assertEquals(0, timer.getDeathPauseAdjustMax());
+		assertEquals(0, timer.getUpcomingWindow(170, 100).getLatestTicks());
+	}
+
+	@Test
+	public void implausibleObservationDoesNotChangeDeathPause()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.markNow(50, 100);
+		timer.onDeath(80, 20);
+		timer.onRespawn(100);
+
+		// A heal 30 ticks from any plausible pause: some other mechanic.
+		timer.markNow(200, 100);
+
+		assertFalse(timer.consumeDeathPauseUpdate());
+		assertFalse(timer.isDeathPauseLearned());
+		assertEquals(0, timer.getDeathPauseAdjustMin());
+		assertEquals(2, timer.getDeathPauseAdjustMax());
+		RegenTimer.Window window = timer.getUpcomingWindow(200, 100);
+		assertEquals(0, window.getEarliestTicks());
+		assertEquals(0, window.getLatestTicks());
+	}
+
+	@Test
+	public void deathOnlySeenAtDespawnWidensWindowAndIsNotLearnedFrom()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.markNow(50, 100);
+		timer.onDeath(80, 20, false);
+		timer.onRespawn(100);
+
+		RegenTimer.Window window = timer.getUpcomingWindow(100, 100);
+		assertEquals(68, window.getEarliestTicks());
+		assertEquals(75, window.getLatestTicks());
+
+		timer.markNow(170, 100);
+		assertFalse(timer.consumeDeathPauseUpdate());
+		assertEquals(0, timer.getUpcomingWindow(170, 100).getLatestTicks());
+	}
+
+	@Test
+	public void carriedPhaseSharpensTheFirstSplashedHealAfterRespawn()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.setDeathPauseAdjustment(2, 2, true);
+		timer.markNow(50, 100);
+		timer.onDeath(80, 20);
+		timer.onRespawn(100);
+
+		// The splash only shows the heal happened somewhere in 167-170.
+		timer.sampleHealth(10, 30, 160, 100, 3);
+		timer.sampleHealth(11, 30, 170, 100, 3);
+
+		RegenTimer.Window window = timer.getUpcomingWindow(170, 100);
+		assertEquals(98, window.getEarliestTicks());
+		assertEquals(98, window.getLatestTicks());
 	}
 
 	@Test
 	public void lateExpectedRespawnValueUpdatesCurrentCountdownAndPhase()
 	{
 		RegenTimer timer = new RegenTimer();
+		timer.setDeathPauseAdjustment(0, 0, true);
 		timer.markNow(50);
 		timer.onDeath(80, 20);
 

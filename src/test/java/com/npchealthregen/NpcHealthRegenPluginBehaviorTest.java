@@ -76,32 +76,59 @@ public class NpcHealthRegenPluginBehaviorTest
 	}
 
 	@Test
-	public void lateRespawnSightingIsNotLearnedAndShorterOneIs() throws Exception
+	public void longerMeasuredDeadTimeIsUsedAsMeasured() throws Exception
 	{
+		// The death sequence waits for the NPC to stop moving, so the time from
+		// the killing hit to the respawn legitimately varies by a tick or two.
 		kill();
 		set("tick", 20L);
 		NPC first = npc(1, 42);
 		plugin.onNpcSpawned(new NpcSpawned(first));
 		assertEquals(20, plugin.getActiveRespawnTicks());
 
-		// Walked into view 15 ticks after it really respawned.
 		set("tick", 100L);
 		plugin.onActorDeath(new ActorDeath(first));
-		set("tick", 135L);
-		NPC late = npc(1, 42);
-		when(late.getWorldLocation()).thenReturn(new WorldPoint(3210, 3200, 0));
-		plugin.onNpcSpawned(new NpcSpawned(late));
-		assertSame(late, plugin.getTarget());
-		assertEquals(20, plugin.getActiveRespawnTicks());
-		verify(profiles, never()).save(anyInt(), anyInt(), eq(35));
-		assertEquals(new WorldPoint(3200, 3200, 0), plugin.getLastTargetPoint());
-
-		// A quicker sighting means the saved time was itself late.
-		set("tick", 200L);
-		plugin.onActorDeath(new ActorDeath(late));
-		set("tick", 218L);
+		set("tick", 122L);
 		plugin.onNpcSpawned(new NpcSpawned(npc(1, 42)));
-		assertEquals(18, plugin.getActiveRespawnTicks());
+		assertEquals(22, plugin.getActiveRespawnTicks());
+	}
+
+	@Test
+	public void firstHealAfterRespawnLearnsAndSavesDeathPause() throws Exception
+	{
+		plugin.getTimer().markNow(50, 100);
+		set("tick", 80L);
+		kill();
+		set("tick", 100L);
+		plugin.onNpcSpawned(new NpcSpawned(npc(1, 42)));
+
+		// The countdown only paused for 18 of the 20 measured dead ticks.
+		set("tick", 168L);
+		plugin.keyPressed(key(KeyEvent.VK_F6));
+		runQueuedHotkey();
+
+		assertEquals(2, plugin.getTimer().getDeathPauseAdjustMin());
+		assertEquals(2, plugin.getTimer().getDeathPauseAdjustMax());
+		verify(profiles).saveDeathPause(1, 2, 2);
+	}
+
+	@Test
+	public void savedDeathPauseIsLoadedForTheNpcType() throws Exception
+	{
+		when(profiles.loadDeathPause(1)).thenReturn(new int[]{1, 1});
+		select(target);
+
+		assertEquals(1, plugin.getTimer().getDeathPauseAdjustMin());
+		assertEquals(1, plugin.getTimer().getDeathPauseAdjustMax());
+		assertTrue(plugin.getTimer().isDeathPauseLearned());
+	}
+
+	@Test
+	public void unlearnedDeathPauseUsesDefaultRange()
+	{
+		assertEquals(RegenTimer.DEFAULT_DEATH_PAUSE_ADJUST_MIN, plugin.getTimer().getDeathPauseAdjustMin());
+		assertEquals(RegenTimer.DEFAULT_DEATH_PAUSE_ADJUST_MAX, plugin.getTimer().getDeathPauseAdjustMax());
+		assertFalse(plugin.getTimer().isDeathPauseLearned());
 	}
 
 	@Test

@@ -28,6 +28,8 @@ final class NpcTimingProfileStore
 	}
 
 	private static final String KEY_PREFIX = "learnedNpc_";
+	// Kept separate from KEY_PREFIX so the existing "regen,respawn" format is unchanged.
+	private static final String DEATH_PAUSE_KEY_PREFIX = "learnedDeathPause_";
 	private final ConfigManager configManager;
 
 	@Inject
@@ -49,6 +51,46 @@ final class NpcTimingProfileStore
 			NpcHealthRegenConfig.GROUP,
 			KEY_PREFIX + npcId,
 			Math.max(0, regenTicks) + "," + Math.max(0, respawnTicks));
+	}
+
+	/** @return the learned {minimum, maximum} death-pause adjustment, or null if not learned */
+	int[] loadDeathPause(int npcId)
+	{
+		return decodeDeathPause(configManager.getConfiguration(
+			NpcHealthRegenConfig.GROUP, DEATH_PAUSE_KEY_PREFIX + npcId));
+	}
+
+	void saveDeathPause(int npcId, int minimum, int maximum)
+	{
+		configManager.setConfiguration(
+			NpcHealthRegenConfig.GROUP,
+			DEATH_PAUSE_KEY_PREFIX + npcId,
+			minimum + "," + maximum);
+	}
+
+	static int[] decodeDeathPause(String stored)
+	{
+		if (stored == null || stored.isEmpty())
+		{
+			return null;
+		}
+
+		String[] parts = stored.split(",", -1);
+		if (parts.length != 2)
+		{
+			return null;
+		}
+
+		try
+		{
+			int minimum = Integer.parseInt(parts[0]);
+			int maximum = Integer.parseInt(parts[1]);
+			return minimum <= maximum ? new int[]{minimum, maximum} : null;
+		}
+		catch (NumberFormatException ignored)
+		{
+			return null;
+		}
 	}
 
 	static Profile decode(String stored)

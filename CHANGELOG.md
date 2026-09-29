@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.4
+
+- Fix the regen countdown drifting late over back-to-back kills. The countdown
+  pauses while the NPC is dead, but it keeps counting on a tick or two around
+  the death and respawn, so the pause is slightly shorter than the measured
+  killing-hit-to-respawn time. Shifting by the full measured time left the
+  prediction a tick or two late per kill, adding up over several kills.
+- Learn that per-NPC adjustment from the first heal observed after a respawn
+  and save it. Until learned, widen the window to cover 0-2 ticks per kill.
+- Narrow the first heal observed after a respawn with the carried phase instead
+  of discarding it.
+- Revert 0.9.3's shortest-respawn cap: the killing-hit-to-respawn time can
+  legitimately vary by a tick or two, because the death sequence waits for the
+  NPC to stop moving, so the cap could cut real dead time.
+
 ## 0.9.3
 
 - Fix the regen countdown drifting 5-15 ticks after some kills. A respawn is
