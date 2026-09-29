@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Fix **Reset timer** / **Recalibrate Regen Timer** erasing an NPC type's saved
+  respawn time when **Learn NPC timings** is off. Only the saved regen rate is
+  cleared, as the README says; the respawn measurement is kept.
+- Make the test suite runnable on a JDK newer than 20, where Mockito's Byte
+  Buddy otherwise refuses to start the tests that mock RuneLite types. No change
+  to the plugin itself.
+
 ## 0.9.8
 
 - Fix a shared party timer staying tens of ticks wrong on an account that lost

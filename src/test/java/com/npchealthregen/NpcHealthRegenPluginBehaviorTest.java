@@ -1233,6 +1233,19 @@ public class NpcHealthRegenPluginBehaviorTest
 		verify(profiles).save(1, 0, 20);
 	}
 
+	@Test
+	public void recalibrationKeepsSavedRespawnWhileLearningIsOff() throws Exception
+	{
+		// With learning off the saved profile is not loaded, but it must not be erased either.
+		when(config.learnNpcTimings()).thenReturn(false);
+		when(profiles.load(1)).thenReturn(new NpcTimingProfileStore.Profile(112, 20));
+		select(target);
+		assertFalse(plugin.isLearnedRespawn());
+		plugin.keyPressed(key(KeyEvent.VK_F7));
+		runQueuedHotkey();
+		verify(profiles).save(1, 0, 20);
+	}
+
 	private void kill()
 	{
 		plugin.onActorDeath(new ActorDeath(target));

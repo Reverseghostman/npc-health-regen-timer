@@ -8,7 +8,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import javax.inject.Inject;
-import net.runelite.api.Actor;
 import net.runelite.api.Client;
 import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.GameState;
@@ -1003,8 +1002,11 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		resetObservationSource();
 		activeRegenTicks = config.regenTicks();
 		learnedRegen = false;
-		// Clear only this NPC type's regen rate; retain its respawn measurement.
-		profileStore.save(targetNpcId, 0, learnedRespawn ? activeRespawnTicks : 0);
+		// Clear only this NPC type's regen rate; retain its respawn measurement. With learning off
+		// the saved profile was not loaded, so read the measurement back rather than erase it.
+		int savedRespawnTicks = learnedRespawn
+			? activeRespawnTicks : profileStore.load(targetNpcId).getRespawnTicks();
+		profileStore.save(targetNpcId, 0, savedRespawnTicks);
 	}
 
 	private void loadActiveProfile()
