@@ -24,6 +24,12 @@ NPC type from the first heal you observe after a respawn. Until then, the regen
 window widens by up to two ticks per kill to cover it, and it narrows again once
 learned.
 
+The plugin only sees a respawn once the NPC is within 15 tiles of you. If it respawns
+while you are farther off (or logged out) and you walk back later, the sighting is late
+by an unknown amount. It then uses the NPC's respawn time if it has one, and otherwise
+widens the countdown to say so, rather than counting the whole time away as dead time.
+It does not learn a respawn time from a late sighting.
+
 If a 1 HP heal does not change the health bar, set the **Mark regeneration now**
 hotkey and press it when the heal occurs.
 
@@ -133,7 +139,10 @@ same world, and when the NPC walks out of view. The timer carries on by the
 time that passed, widened by a tick (plus one per five minutes away), and the
 NPC is picked up again when it reappears. Logging into another world, or
 moving more than 50 tiles from it while it is out of view, drops it. Deaths and
-respawns that happen out of sight cannot be seen.
+respawns that happen out of sight cannot be seen, and one of them moves the
+regen timing by the time the NPC was dead. So a timer carried on through time
+out of sight is treated as unconfirmed until you see a heal yourself, or a party
+member who was watching sends a window (see below).
 
 ## Sharing timers with a party
 
@@ -146,6 +155,11 @@ automatically:
 - a member with a rougher window is narrowed by yours when the two agree
 - your own observations always take priority: a shared window that contradicts
   them is ignored, and your first own heal takes over from a shared one
+- a timer you only carried on while the NPC was out of sight, or you were
+  logged out, is not an observation. A member who has been watching it replaces
+  it, even if they disagree, since a kill you did not see moves the timing. This
+  also happens while the NPC is out of your view, so you come back to the right
+  timer. A member whose own timer is in that state does not replace yours
 
 Party members count ticks separately, so a shared window is widened by one
 tick on each side for delivery timing. The overlay shows **Timer from** with

@@ -65,6 +65,12 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	private static final int PARTY_LATENCY_TICKS = 1;
 	// Beyond this many tiles from its spawn, an out-of-view NPC is dropped.
 	private static final int OUT_OF_VIEW_CLEAR_DISTANCE = 50;
+	// The game sends NPCs within this many tiles, so a respawn farther off is only seen once the
+	// player walks closer.
+	private static final int NPC_VIEW_DISTANCE = 15;
+	// Kills of one NPC type can respawn a tick or two apart, because the death sequence waits for
+	// the NPC to stop moving.
+	private static final int RESPAWN_TIME_SLACK_TICKS = 2;
 	// Longest plausible wait from using dynamite on the NPC to its hitsplat.
 	private static final int MAX_DYNAMITE_DELAY_TICKS = 10;
 	private static final Set<Integer> SERPENTINE_HELMS = Set.of(
@@ -171,6 +177,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	private long awayMillis = -1;
 	private long awayTick;
 	private long awayTicksDuringDeath = -1;
+	// First tick since the NPC died that the player was too far from its spawn to see it respawn.
+	private long respawnWatchLostTick = -1;
 	private final VenomRing venomRing = new VenomRing();
 	private final Map<Integer, Integer> freshVenomDelays = new HashMap<>();
 	private long dynamiteUseTick = -1;
@@ -223,16 +231,23 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 				processInspectionResult();
 			}
 		}
-		else if (isTargetOutOfView() && isFarFromTarget())
+		else if (isTargetOutOfView() && isBeyond(OUT_OF_VIEW_CLEAR_DISTANCE))
 		{
 			// Walked or teleported away: stop tracking an NPC that is not coming back.
 			clearTarget();
+		}
+		else if (respawnWatchLostTick < 0 && timer.getState() == RegenTimer.State.WAITING_FOR_RESPAWN
+			&& isBeyond(NPC_VIEW_DISTANCE))
+		{
+			// From here a respawn can go unseen, and the sighting will then be late.
+			respawnWatchLostTick = tick;
 		}
 		venomRing.onTick(tick);
 		shareTimer();
 	}
 
-	private boolean isFarFromTarget()
+	/** @return whether the player is on another plane or more than {@code distance} tiles from the NPC's spawn */
+	private boolean isBeyond(int distance)
 	{
 		Player player = client == null ? null : client.getLocalPlayer();
 		if (player == null || lastTargetPoint == null)
@@ -241,7 +256,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		}
 		WorldPoint location = player.getWorldLocation();
 		return location.getPlane() != lastTargetPoint.getPlane()
-			|| location.distanceTo2D(lastTargetPoint) > OUT_OF_VIEW_CLEAR_DISTANCE;
+			|| location.distanceTo2D(lastTargetPoint) > distance;
 	}
 
 	/** Sends the tracked NPC's regen window to the party whenever it changes. */
@@ -261,17 +276,19 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		}
 
 		int world = client.getWorld();
+		boolean unverified = timer.isUnverified();
 		// The absolute window only moves when it is refined or rolls to the next
 		// cycle, so this sends at most about once per regen cycle when idle.
 		String key = world + ":" + targetNpcId + ":" + targetNpcIndex + ":" + activeRegenTicks
-			+ ":" + window[0] + ":" + window[1];
+			+ ":" + window[0] + ":" + window[1] + ":" + unverified;
 		if (!shareRequested && key.equals(lastSharedKey))
 		{
 			return;
 		}
 
 		partyService.send(new NpcHealthRegenPartyUpdate(world, targetNpcId, targetNpcIndex,
-			activeRegenTicks, learnedRegen, (int) (window[0] - tick), (int) (window[1] - tick)));
+			activeRegenTicks, learnedRegen, (int) (window[0] - tick), (int) (window[1] - tick),
+			unverified));
 		lastSharedKey = key;
 		shareRequested = false;
 	}
@@ -286,7 +303,10 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	void applyPartyUpdate(NpcHealthRegenPartyUpdate update)
 	{
 		PartyMember local = partyService.getLocalMember();
-		if (!config.useSharedTimers() || target == null || local == null
+		// Also while the NPC is out of view: a member who is watching it keeps the timer right
+		// through a kill or respawn this client cannot see. Not while logged out, when no ticks
+		// arrive, so the window could not be placed in time; the next one after login corrects it.
+		if (!config.useSharedTimers() || targetNpcId < 0 || awayMillis >= 0 || local == null
 			|| local.getMemberId() == update.getMemberId()
 			|| update.getWorld() != client.getWorld()
 			|| update.getNpcId() != targetNpcId || update.getNpcIndex() != targetNpcIndex
@@ -307,7 +327,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 
 		long start = tick + update.getWindowStartOffset() - PARTY_LATENCY_TICKS;
 		long end = tick + update.getWindowEndOffset() + PARTY_LATENCY_TICKS;
-		if (timer.applySharedWindow(start, end, activeRegenTicks))
+		if (timer.applySharedWindow(start, end, activeRegenTicks, update.isUnverified()))
 		{
 			PartyMember sender = partyService.getMemberById(update.getMemberId());
 			partySourceName = sender == null ? "Party member" : sender.getDisplayName();
@@ -769,6 +789,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			target = null;
 			resetObservationSource();
 			timer.sampleHealth(-1, 0, tick);
+			// It can die and respawn while nobody here is looking, which moves the phase.
+			timer.markUnverified();
 		}
 	}
 
@@ -789,23 +811,27 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			return;
 		}
 
-		lastTargetPoint = observedSpawnPoints.get(npc);
 		deathHandled = false;
 		resetObservationSource();
-		if (awayTicksDuringDeath >= 0)
+		long unseenTicks = Math.max(awayTicksDuringDeath,
+			respawnWatchLostTick >= 0 ? tick - respawnWatchLostTick : -1);
+		if (unseenTicks >= 0)
 		{
-			// It respawned while logged out: the sighting is late by an unknown
-			// amount, so assume the expected respawn if it fits.
+			// It respawned while logged out or out of range: the sighting is late by an
+			// unknown amount, so assume the expected respawn if it fits. What it walked to
+			// since is not its spawn tile, so keep the one already known.
 			long expected = timer.getExpectedRespawnTick();
 			boolean expectedFits = expected >= 0 && expected <= tick;
 			timer.onRespawn(expectedFits ? expected : tick);
-			if (!expectedFits)
-			{
-				timer.widenPhase(awayTicksDuringDeath);
-			}
+			// This kill's respawn can differ from the known one by a tick or two.
+			timer.widenPhase(expectedFits ? RESPAWN_TIME_SLACK_TICKS : unseenTicks);
+			// However it is bounded, this phase was not watched through.
+			timer.markUnverified();
 			awayTicksDuringDeath = -1;
+			respawnWatchLostTick = -1;
 			return;
 		}
+		lastTargetPoint = observedSpawnPoints.get(npc);
 		// The measurement is used as-is: it can legitimately vary by a tick or two
 		// between kills, because the death sequence waits for the NPC to stop moving.
 		int measuredRespawnTicks = timer.onRespawn(tick);
@@ -874,6 +900,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			target = null;
 			resetObservationSource();
 			timer.sampleHealth(-1, 0, tick);
+			timer.markUnverified();
 		}
 		else if (state == GameState.LOGGED_IN && awayMillis >= 0)
 		{
@@ -945,6 +972,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		deathHandled = false;
 		awayMillis = -1;
 		awayTicksDuringDeath = -1;
+		respawnWatchLostTick = -1;
 		dynamiteUseTick = -1;
 		// How long dynamite takes to land depends on the distance to this NPC.
 		measuredDynamiteDelay = -1;
@@ -1022,6 +1050,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 
 		deathHandled = true;
 		this.deathTickReliable = deathTickReliable;
+		respawnWatchLostTick = -1;
 		target = null;
 		resetObservationSource();
 		timer.onDeath(tick, activeRespawnTicks, deathTickReliable);
@@ -1050,6 +1079,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		deathHandled = false;
 		awayMillis = -1;
 		awayTicksDuringDeath = -1;
+		respawnWatchLostTick = -1;
 		dynamiteUseTick = -1;
 		measuredDynamiteDelay = -1;
 		venomRing.reset();
