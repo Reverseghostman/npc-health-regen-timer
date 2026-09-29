@@ -225,7 +225,7 @@ final class MonsterInspectionReader
 		return HTML_TAG.matcher(BREAK_TAG.matcher(text).replaceAll("\n"))
 			.replaceAll("")
 			.replace("&nbsp;", " ")
-			.replace(' ', ' ')
+			.replace('\u00a0', ' ')
 			.trim();
 	}
 }
