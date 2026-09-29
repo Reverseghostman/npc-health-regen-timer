@@ -69,6 +69,11 @@ final class RegenTimer
 	// The current phase came from a party member rather than this client's own
 	// observations; cleared by the next local observation.
 	private boolean phaseFromParty;
+	// The current phase was carried through time this client could not see the NPC (out of view,
+	// logged out, or a respawn it saw late). An unseen death or respawn moves the real phase, so a
+	// party member who has been watching is likelier right than this. Cleared by the next local
+	// observation or by a share from a member whose own phase is not in doubt.
+	private boolean unverified;
 	// Consecutive deaths since the phase was last observed. The carried window is
 	// always rebuilt from the phase before the first of them, so a later
 	// calibration can re-derive it rather than compound per-kill rounding.
@@ -84,6 +89,7 @@ final class RegenTimer
 	{
 		clearDeathChain();
 		phaseFromParty = false;
+		unverified = false;
 		inspectionPhase.reset();
 		state = State.OBSERVING;
 		lastHealthRatio = -1;
@@ -251,6 +257,7 @@ final class RegenTimer
 			windowEndTick = end;
 			state = State.TRACKING;
 			phaseFromParty = false;
+			unverified = false;
 		}
 		return learned;
 	}
@@ -461,12 +468,19 @@ final class RegenTimer
 			Math.min(end, windowEndTick + first * interval)};
 	}
 
+	boolean applySharedWindow(long start, long end, int interval)
+	{
+		return applySharedWindow(start, end, interval, false);
+	}
+
 	/**
 	 * Merges a regen window shared by a party member tracking the same NPC,
 	 * already converted to this client's ticks.
+	 * @param senderUnverified whether the sender's own phase was carried through time it could not
+	 * see the NPC, so is in doubt itself
 	 * @return whether the local window changed
 	 */
-	boolean applySharedWindow(long start, long end, int interval)
+	boolean applySharedWindow(long start, long end, int interval, boolean senderUnverified)
 	{
 		if (state == State.WAITING_FOR_RESPAWN || start > end || interval <= 0)
 		{
@@ -476,16 +490,29 @@ final class RegenTimer
 		long newStart = start;
 		long newEnd = end;
 		// A local window spanning a whole cycle says nothing about the phase.
-		if (windowStartTick >= 0 && windowEndTick - windowStartTick < interval)
+		boolean localNarrow = windowStartTick >= 0 && windowEndTick - windowStartTick < interval;
+		if (localNarrow)
 		{
-			long[] narrowed = periodicIntersection(start, end, interval);
-			// Incompatible, ambiguous or no narrower: keep the first-hand phase.
-			if (narrowed == null || narrowed[1] - narrowed[0] >= windowEndTick - windowStartTick)
+			int overlaps = periodicOverlaps(start, end, interval);
+			if (overlaps == 1)
 			{
+				long[] narrowed = periodicIntersection(start, end, interval);
+				// No narrower: keep the phase already held.
+				if (narrowed[1] - narrowed[0] >= windowEndTick - windowStartTick)
+				{
+					return false;
+				}
+				newStart = narrowed[0];
+				newEnd = narrowed[1];
+			}
+			else if (overlaps != 0 || !unverified || senderUnverified)
+			{
+				// Ambiguous, or it contradicts a phase this client observed or one the sender is
+				// no surer of: keep the first-hand phase.
 				return false;
 			}
-			newStart = narrowed[0];
-			newEnd = narrowed[1];
+			// Otherwise it contradicts a phase carried through time out of sight, which an unseen
+			// death or respawn can have moved, and the sender has been watching: take the sender's.
 		}
 
 		windowStartTick = newStart;
@@ -494,12 +521,46 @@ final class RegenTimer
 		// The carried chain is superseded by the merged phase.
 		clearDeathChain();
 		phaseFromParty = true;
+		// The merged phase is only as sure as its least sure source; a verified local window
+		// narrowed by an unverified share is still inside what was verified.
+		unverified = senderUnverified && (unverified || !localNarrow);
 		return true;
+	}
+
+	/**
+	 * @return how many translations of the local window by whole intervals overlap [start, end]:
+	 * 0 when they contradict each other, 1 when compatible, 2 for two or more (ambiguous)
+	 */
+	private int periodicOverlaps(long start, long end, int interval)
+	{
+		long first = -Math.floorDiv(windowEndTick - start, interval);
+		long last = Math.floorDiv(end - windowStartTick, interval);
+		return (int) Math.max(0, Math.min(2, last - first + 1));
 	}
 
 	boolean isPhaseFromParty()
 	{
 		return phaseFromParty;
+	}
+
+	/**
+	 * Notes that the NPC went out of sight, or the client away, with the phase still being
+	 * carried on: a death or respawn in that time would have moved it unseen.
+	 */
+	void markUnverified()
+	{
+		if (windowStartTick >= 0)
+		{
+			unverified = true;
+			// The anchor the pause would be learned from is in doubt too.
+			chainReliable = false;
+		}
+	}
+
+	/** @return whether the phase was carried through time the NPC could not be seen */
+	boolean isUnverified()
+	{
+		return unverified;
 	}
 
 	/**
@@ -654,6 +715,7 @@ final class RegenTimer
 			end = narrowed[1];
 		}
 		phaseFromParty = false;
+		unverified = false;
 
 		if (observedRegens > 0 && start <= windowEndTick && end >= windowStartTick)
 		{
