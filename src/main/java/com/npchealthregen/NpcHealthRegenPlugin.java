@@ -402,6 +402,11 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			learnedRegen = true;
 			saveActiveProfile();
 		}
+		if (timer.consumeDeathPauseUpdate() && config.learnNpcTimings() && targetNpcId >= 0)
+		{
+			profileStore.saveDeathPause(targetNpcId,
+				timer.getDeathPauseAdjustMin(), timer.getDeathPauseAdjustMax());
+		}
 	}
 
 	@Subscribe
@@ -442,25 +447,16 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			return;
 		}
 
-		// The client only sees a respawn once the NPC is in view, so a sighting can
-		// be late but never early. Respawn times are fixed, so the shortest reliable
-		// measurement is the real one and anything longer was a late sighting.
-		int knownRespawnTicks = learnedRespawn ? activeRespawnTicks : 0;
-		int measuredRespawnTicks = timer.onRespawn(tick, knownRespawnTicks);
-		boolean lateSighting = knownRespawnTicks > 0 && measuredRespawnTicks > knownRespawnTicks;
-
 		target = npc;
 		targetNpcIndex = npc.getIndex();
-		if (!lateSighting)
-		{
-			// A late sighting is wherever the NPC had walked to, not its spawn tile.
-			lastTargetPoint = observedSpawnPoints.get(npc);
-		}
+		lastTargetPoint = observedSpawnPoints.get(npc);
 		deathHandled = false;
 		resetObservationSource();
+		// The measurement is used as-is: it can legitimately vary by a tick or two
+		// between kills, because the death sequence waits for the NPC to stop moving.
+		int measuredRespawnTicks = timer.onRespawn(tick);
 		// A death only noticed at despawn was recorded late, so its time is too short.
-		if (measuredRespawnTicks > 0 && deathTickReliable && config.learnNpcTimings()
-			&& (knownRespawnTicks <= 0 || measuredRespawnTicks < knownRespawnTicks))
+		if (measuredRespawnTicks > 0 && deathTickReliable && config.learnNpcTimings())
 		{
 			activeRespawnTicks = measuredRespawnTicks;
 			learnedRespawn = true;
@@ -566,6 +562,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 
 	private void recalibrate()
 	{
+		// The death-pause adjustment is kept, like the respawn time: it does not
+		// depend on the regen rate being recalibrated.
 		timer.reset();
 		resetObservationSource();
 		activeRegenTicks = config.regenTicks();
@@ -584,6 +582,17 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		activeRegenTicks = learnedRegen ? storedRegenTicks : config.regenTicks();
 		activeRespawnTicks = learnedRespawn ? profile.getRespawnTicks() : config.respawnTicks();
 		timer.updateExpectedRespawnTicks(activeRespawnTicks);
+
+		int[] deathPause = config.learnNpcTimings() ? profileStore.loadDeathPause(targetNpcId) : null;
+		if (deathPause != null)
+		{
+			timer.setDeathPauseAdjustment(deathPause[0], deathPause[1], true);
+		}
+		else
+		{
+			timer.setDeathPauseAdjustment(RegenTimer.DEFAULT_DEATH_PAUSE_ADJUST_MIN,
+				RegenTimer.DEFAULT_DEATH_PAUSE_ADJUST_MAX, false);
+		}
 	}
 
 	private void saveActiveProfile()
@@ -608,7 +617,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		this.deathTickReliable = deathTickReliable;
 		target = null;
 		resetObservationSource();
-		timer.onDeath(tick, activeRespawnTicks);
+		timer.onDeath(tick, activeRespawnTicks, deathTickReliable);
 	}
 
 	private boolean isExpectedRespawn(NPC npc)

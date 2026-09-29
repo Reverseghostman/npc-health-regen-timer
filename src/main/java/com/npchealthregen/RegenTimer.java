@@ -4,6 +4,19 @@ final class RegenTimer
 {
 	static final int PRECISE_WINDOW_TICKS = 3;
 	private static final int MAX_LEARNING_UNCERTAINTY = 6;
+	/*
+	 * The regen countdown pauses while an NPC is dead, but not for the whole
+	 * killing-hit-to-respawn time the client measures: the NPC keeps counting on
+	 * the tick(s) before its death sequence starts and on its respawn tick. The
+	 * pause is therefore (measured dead ticks - adjustment), for a small constant
+	 * adjustment learned per NPC type. Until learned, cover the plausible range.
+	 */
+	static final int DEFAULT_DEATH_PAUSE_ADJUST_MIN = 0;
+	static final int DEFAULT_DEATH_PAUSE_ADJUST_MAX = 2;
+	private static final int PLAUSIBLE_DEATH_PAUSE_ADJUST_MIN = -3;
+	private static final int PLAUSIBLE_DEATH_PAUSE_ADJUST_MAX = 6;
+	// A death only noticed at despawn was recorded after the death sequence began.
+	private static final int UNRELIABLE_DEATH_SLACK_TICKS = 5;
 	enum State
 	{
 		OBSERVING,
@@ -49,10 +62,24 @@ final class RegenTimer
 	private long deathTick = -1;
 	private int appliedRespawnTicks;
 	private long expectedRespawnTick = -1;
+	private int deathPauseAdjustMin = DEFAULT_DEATH_PAUSE_ADJUST_MIN;
+	private int deathPauseAdjustMax = DEFAULT_DEATH_PAUSE_ADJUST_MAX;
+	private boolean deathPauseLearned;
+	private boolean deathPauseUpdated;
+	// Consecutive deaths since the phase was last observed. The carried window is
+	// always rebuilt from the phase before the first of them, so a later
+	// calibration can re-derive it rather than compound per-kill rounding.
+	private long chainAnchorStart = -1;
+	private long chainAnchorEnd = -1;
+	private long chainDeadTicks;
+	private int chainDeaths;
+	private long chainSlack;
+	private boolean chainReliable;
 	private final InspectionPhaseTracker inspectionPhase = new InspectionPhaseTracker();
 
 	void reset()
 	{
+		clearDeathChain();
 		inspectionPhase.reset();
 		state = State.OBSERVING;
 		lastHealthRatio = -1;
@@ -200,7 +227,13 @@ final class RegenTimer
 			// Intersect with other sources only when one periodic translation fits.
 			long start = phase[0];
 			long end = phase[1];
-			if (previousStart >= 0 && interval == preferredInterval)
+			if (chainDeaths > 0)
+			{
+				long[] narrowed = resolveDeathChain(start, end, interval);
+				start = narrowed[0];
+				end = narrowed[1];
+			}
+			else if (previousStart >= 0 && interval == preferredInterval)
 			{
 				long first = -Math.floorDiv(previousEnd - start, interval);
 				long last = Math.floorDiv(end - previousStart, interval);
@@ -236,6 +269,15 @@ final class RegenTimer
 
 	void onDeath(long tick, int expectedRespawnTicks)
 	{
+		onDeath(tick, expectedRespawnTicks, true);
+	}
+
+	/**
+	 * @param deathTickReliable false when the death was only noticed as the NPC
+	 * despawned, after its death sequence (and regen pause) had already begun
+	 */
+	void onDeath(long tick, int expectedRespawnTicks, boolean deathTickReliable)
+	{
 		inspectionPhase.reset();
 		lastExactDefence = -1;
 		lastDefenceSampleTick = -1;
@@ -249,26 +291,26 @@ final class RegenTimer
 		appliedRespawnTicks = Math.max(0, expectedRespawnTicks);
 		expectedRespawnTick = expectedRespawnTicks > 0 ? tick + expectedRespawnTicks : -1;
 
-		if (windowStartTick >= 0)
+		if (chainDeaths == 0)
 		{
-			windowStartTick += appliedRespawnTicks;
-			windowEndTick += appliedRespawnTicks;
+			chainAnchorStart = windowStartTick;
+			chainAnchorEnd = windowEndTick;
+			chainDeadTicks = 0;
+			chainSlack = 0;
+			chainReliable = true;
 		}
+		chainDeaths++;
+		if (!deathTickReliable)
+		{
+			chainSlack += UNRELIABLE_DEATH_SLACK_TICKS;
+			chainReliable = false;
+		}
+		applyDeathChain(appliedRespawnTicks);
 		state = State.WAITING_FOR_RESPAWN;
 	}
 
+	/** @return the measured killing-hit-to-respawn ticks */
 	int onRespawn(long tick)
-	{
-		return onRespawn(tick, 0);
-	}
-
-	/**
-	 * @param knownRespawnTicks a trusted respawn time, or 0. The client only
-	 * sees a respawn once the NPC is in view, so a longer measurement is a late
-	 * sighting and must not shift the regen phase past the known dead time.
-	 * @return the measured death-to-sighting ticks
-	 */
-	int onRespawn(long tick, int knownRespawnTicks)
 	{
 		if (state != State.WAITING_FOR_RESPAWN)
 		{
@@ -277,13 +319,8 @@ final class RegenTimer
 
 		long measured = Math.max(0, tick - deathTick);
 		int actualRespawnTicks = measured > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) measured;
-		int deadTicks = knownRespawnTicks > 0 ? Math.min(actualRespawnTicks, knownRespawnTicks) : actualRespawnTicks;
-		int correction = deadTicks - appliedRespawnTicks;
-		if (windowStartTick >= 0)
-		{
-			windowStartTick += correction;
-			windowEndTick += correction;
-		}
+		chainDeadTicks += actualRespawnTicks;
+		applyDeathChain(0);
 
 		state = windowStartTick >= 0 ? State.TRACKING : State.OBSERVING;
 		deathTick = -1;
@@ -299,15 +336,151 @@ final class RegenTimer
 			return;
 		}
 
-		int newAppliedTicks = Math.max(0, expectedTicks);
-		expectedRespawnTick = newAppliedTicks > 0 ? deathTick + newAppliedTicks : -1;
-		if (windowStartTick >= 0)
+		appliedRespawnTicks = Math.max(0, expectedTicks);
+		expectedRespawnTick = appliedRespawnTicks > 0 ? deathTick + appliedRespawnTicks : -1;
+		applyDeathChain(appliedRespawnTicks);
+	}
+
+	void setDeathPauseAdjustment(int minimum, int maximum, boolean learned)
+	{
+		deathPauseAdjustMin = Math.min(minimum, maximum);
+		deathPauseAdjustMax = Math.max(minimum, maximum);
+		deathPauseLearned = learned;
+		deathPauseUpdated = false;
+		if (chainDeaths > 0)
 		{
-			int correction = newAppliedTicks - appliedRespawnTicks;
-			windowStartTick += correction;
-			windowEndTick += correction;
+			applyDeathChain(state == State.WAITING_FOR_RESPAWN ? appliedRespawnTicks : 0);
 		}
-		appliedRespawnTicks = newAppliedTicks;
+	}
+
+	int getDeathPauseAdjustMin()
+	{
+		return deathPauseAdjustMin;
+	}
+
+	int getDeathPauseAdjustMax()
+	{
+		return deathPauseAdjustMax;
+	}
+
+	boolean isDeathPauseLearned()
+	{
+		return deathPauseLearned;
+	}
+
+	/** @return whether an observation has refined the adjustment since the last call */
+	boolean consumeDeathPauseUpdate()
+	{
+		boolean updated = deathPauseUpdated;
+		deathPauseUpdated = false;
+		return updated;
+	}
+
+	/**
+	 * Rebuilds the carried phase from the phase before the chain's first death.
+	 * @param pendingDeadTicks dead ticks assumed for a death still awaiting respawn
+	 */
+	private void applyDeathChain(long pendingDeadTicks)
+	{
+		if (chainAnchorStart < 0)
+		{
+			return;
+		}
+
+		long dead = chainDeadTicks + pendingDeadTicks;
+		windowStartTick = chainAnchorStart + dead - (long) chainDeaths * deathPauseAdjustMax;
+		windowEndTick = chainAnchorEnd + dead - (long) chainDeaths * deathPauseAdjustMin + chainSlack;
+	}
+
+	private void clearDeathChain()
+	{
+		chainAnchorStart = -1;
+		chainAnchorEnd = -1;
+		chainDeadTicks = 0;
+		chainDeaths = 0;
+		chainSlack = 0;
+		chainReliable = false;
+	}
+
+	/**
+	 * Uses the first heal observed after one or more deaths to learn the pause
+	 * adjustment, then narrows the observation with the carried phase.
+	 * @return the narrowed observation window
+	 */
+	private long[] resolveDeathChain(long start, long end, int interval)
+	{
+		if (chainDeaths <= 0 || state == State.WAITING_FOR_RESPAWN)
+		{
+			return new long[]{start, end};
+		}
+
+		if (interval > 0 && chainReliable && chainAnchorStart >= 0)
+		{
+			calibrateDeathPause(start, end, interval);
+		}
+
+		long[] result = {start, end};
+		if (windowStartTick >= 0 && interval > 0)
+		{
+			long first = -Math.floorDiv(windowEndTick - start, interval);
+			long last = Math.floorDiv(end - windowStartTick, interval);
+			if (first == last)
+			{
+				long narrowedStart = Math.max(start, windowStartTick + first * interval);
+				long narrowedEnd = Math.min(end, windowEndTick + first * interval);
+				if (narrowedStart <= narrowedEnd)
+				{
+					result = new long[]{narrowedStart, narrowedEnd};
+				}
+			}
+		}
+		clearDeathChain();
+		return result;
+	}
+
+	private void calibrateDeathPause(long start, long end, int interval)
+	{
+		// heal = anchorPhase + deadTicks - deaths * adjustment + cycles * interval,
+		// with anchorPhase in [anchorStart, anchorEnd] and heal in [start, end].
+		long deaths = chainDeaths;
+		long low = chainAnchorStart + chainDeadTicks - end;
+		long high = chainAnchorEnd + chainDeadTicks - start;
+		if (high - low >= interval)
+		{
+			return;
+		}
+		double expected = deaths * (deathPauseAdjustMin + deathPauseAdjustMax) / 2.0;
+		long cycles = Math.round((expected - (low + high) / 2.0) / interval);
+		low += cycles * interval;
+		high += cycles * interval;
+		long minimum = Math.max(PLAUSIBLE_DEATH_PAUSE_ADJUST_MIN, ceilDiv(low, deaths));
+		long maximum = Math.min(PLAUSIBLE_DEATH_PAUSE_ADJUST_MAX, Math.floorDiv(high, deaths));
+		if (minimum > maximum)
+		{
+			// No plausible whole-tick adjustment fits: leave the model untouched.
+			return;
+		}
+
+		long intersectedMinimum = Math.max(minimum, deathPauseAdjustMin);
+		long intersectedMaximum = Math.min(maximum, deathPauseAdjustMax);
+		if (intersectedMinimum <= intersectedMaximum)
+		{
+			minimum = intersectedMinimum;
+			maximum = intersectedMaximum;
+		}
+		if (minimum != deathPauseAdjustMin || maximum != deathPauseAdjustMax || !deathPauseLearned)
+		{
+			deathPauseAdjustMin = (int) minimum;
+			deathPauseAdjustMax = (int) maximum;
+			deathPauseLearned = true;
+			deathPauseUpdated = true;
+		}
+		applyDeathChain(0);
+	}
+
+	private static long ceilDiv(long dividend, long divisor)
+	{
+		return -Math.floorDiv(-dividend, divisor);
 	}
 
 	Window getUpcomingWindow(long now, int intervalTicks)
@@ -364,6 +537,13 @@ final class RegenTimer
 		if (start > end)
 		{
 			return 0;
+		}
+
+		if (chainDeaths > 0)
+		{
+			long[] narrowed = resolveDeathChain(start, end, preferredInterval);
+			start = narrowed[0];
+			end = narrowed[1];
 		}
 
 		if (observedRegens > 0 && start <= windowEndTick && end >= windowStartTick)

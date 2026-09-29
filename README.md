@@ -13,9 +13,16 @@ Hold **Shift** and right-click the currently tracked NPC again to select
 
 The default regeneration interval is 100 game ticks (60 seconds). Learned
 regeneration and respawn times are saved locally for each NPC type.
-The shortest observed respawn is kept: the client only sees a respawn once the
-NPC is within view, so stay near its spawn point for at least one kill.
-While it is dead the regen countdown pauses for that respawn time.
+
+### Across kills
+
+The regen countdown carries over from one life to the next: it pauses while the
+NPC is dead and resumes when it respawns. It does not pause for the whole time
+from the killing hit to the respawn, though: the NPC keeps counting on a tick or
+two around its death and respawn. The plugin learns that small adjustment per
+NPC type from the first heal you observe after a respawn. Until then, the regen
+window widens by up to two ticks per kill to cover it, and it narrows again once
+learned.
 
 If a 1 HP heal does not change the health bar, set the **Mark regeneration now**
 hotkey and press it when the heal occurs.
