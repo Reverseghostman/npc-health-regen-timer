@@ -77,22 +77,51 @@ purpose. This is not a guarantee of acceptance or of compliance in every future
 use: RuneLite states that Plugin Hub review is best-effort, rules can be
 subjective or change, and every initial submission and update is reviewed.
 
-## Changes since the review
+## Re-review of the later features (29 September 2026)
 
-The review above is dated 22 September 2026. Party sharing, the venom ring, the
-venom chance row and overlay placement were added afterwards. The text above
-describes what they do, but they have not been checked against the guidelines
-again, so the date is left as it was.
+Party sharing, the venom ring, the venom chance row and overlay placement were
+added after the review above. They were re-checked on 29 September 2026 against
+the full text of the [Jagex guidelines](https://secure.runescape.com/m=news/third-party-client-guidelines?oldschool=1)
+(the page is dated 1 June 2022), RuneLite's Plugin Hub Review and Rejected or
+Rolled Back Features wiki pages, and the plugin-hub README.
 
-Version 0.9.8 fixes party timers staying wrong after an account loses sight of
-the NPC. It adds one true/false field to the shared window (whether it was carried
-through time out of view) and changes how a received window is merged. It adds no
-new kind of data, request or on-screen prompt.
+- **In-code rules.** Nothing in `src/main` uses reflection, JNI, subprocesses or
+  runtime code loading. The Plugin Hub jar contains only `src/main`; the tests do
+  use reflection to reach private state, but are not packaged. The hub's own
+  packager, run locally under Java 11 as its CI does, builds the plugin.
+- **Party sharing.** It sends the NPC's world, ID and index, and the regen window
+  as tick offsets with two flags (rate learned, timer unconfirmed), through
+  RuneLite's party service. No player names, locations or gear, so it is not
+  crowdsourcing player data. Received windows are checked before use: the rate
+  must be within the settings' range and the window ordered and narrower than one
+  cycle, which is all this client ever sends.
+- **Venom ring, venom chance and dynamite labels.** The Jagex prohibitions are
+  about boss fights (next-attack prediction, projectile or stand-here indicators,
+  prayer switching, attack counters, boss-mechanic timing) plus freeze and
+  flinch timing. None names poison, venom, dynamite, health regeneration or
+  respawn timing, and RuneLite's rejected list does not either. The hub already
+  lists plugins in the same area (poison-dynamite, poisoned-npcs, venom-timer and
+  venomed-npc-tracker), and version 0.9.7, which already had the venom ring, party
+  sharing, the venom chance row and overlay placement, was merged into the hub on
+  29 September 2026.
+- **Overlay placement.** The Automatic setting reads other plugins' names and
+  whether they are enabled through `PluginManager`. That is not reflection and
+  changes nothing in them. It is still disclosed above.
+- **Menu entries.** Select, Clear and Recalibrate use `MenuAction.RUNELITE`, which
+  is handled in the client only. The guidelines prohibit new entries that send
+  actions to the server.
 
-Open question for those features: the venom ring's Wait, Send and Too late labels
-tell the player when to send poison dynamite. That is a timing prompt, not only
-a passive display. Decide whether it is acceptable, and repeat the review, before
-any Plugin Hub submission or update.
+What this does not settle: RuneLite says its review is best-effort and the rules
+can be subjective, and being merged is not a guarantee about Jagex's view. The
+venom ring's Wait, Send and Too late labels are a timing prompt for the player's
+own dynamite, not only a passive display, so a reviewer or Jagex could still
+object. If they do, reduce the labels to a passive countdown to the proc window.
+The plugin works on whichever NPC the player selects and does not block bosses;
+the intended use is ordinary NPCs, and no boss-specific behaviour should be added.
+
+Version 0.9.8 added one true/false field to the shared window (whether it was
+carried through time out of view) and version 0.9.9 validates received windows.
+Neither adds a new kind of data, request or on-screen prompt.
 
 Before submitting, keep the description and feature set generic and non-boss.
 Do not extend the recorded spawn-location display into attack prediction,

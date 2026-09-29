@@ -62,6 +62,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	// A party update can arrive in the sender's tick or the next, either side of
 	// this client's own tick boundary.
 	private static final int PARTY_LATENCY_TICKS = 1;
+	// The largest regen interval the settings allow, so no shared rate can be larger.
+	private static final int MAX_SHARED_REGEN_TICKS = 10000;
 	// Beyond this many tiles from its spawn, an out-of-view NPC is dropped.
 	private static final int OUT_OF_VIEW_CLEAR_DISTANCE = 50;
 	// The game sends NPCs within this many tiles, so a respawn farther off is only seen once the
@@ -309,7 +311,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			|| local.getMemberId() == update.getMemberId()
 			|| update.getWorld() != client.getWorld()
 			|| update.getNpcId() != targetNpcId || update.getNpcIndex() != targetNpcIndex
-			|| update.getRegenTicks() <= 0)
+			|| !isPlausibleWindow(update))
 		{
 			return;
 		}
@@ -331,6 +333,19 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			PartyMember sender = partyService.getMemberById(update.getMemberId());
 			partySourceName = sender == null ? "Party member" : sender.getDisplayName();
 		}
+	}
+
+	/**
+	 * Party messages come from other clients, so check a window could have been sent by this one:
+	 * a rate within the settings' range, and a window that is ordered and narrower than a cycle
+	 * (a whole cycle says nothing about the phase, and {@link #shareTimer()} never sends one).
+	 */
+	private static boolean isPlausibleWindow(NpcHealthRegenPartyUpdate update)
+	{
+		int regenTicks = update.getRegenTicks();
+		long width = (long) update.getWindowEndOffset() - update.getWindowStartOffset();
+		return regenTicks > 0 && regenTicks <= MAX_SHARED_REGEN_TICKS
+			&& width >= 0 && width < regenTicks;
 	}
 
 	@Subscribe

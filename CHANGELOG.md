@@ -1,13 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.9.9
 
 - Fix **Reset timer** / **Recalibrate Regen Timer** erasing an NPC type's saved
   respawn time when **Learn NPC timings** is off. Only the saved regen rate is
   cleared, as the README says; the respawn measurement is kept.
-- Make the test suite runnable on a JDK newer than 20, where Mockito's Byte
-  Buddy otherwise refuses to start the tests that mock RuneLite types. No change
-  to the plugin itself.
+- Ignore a party timer that no client could have sent: a regen rate above the
+  settings' maximum (10000 ticks), or a window that is reversed or as wide as a
+  whole cycle. Before, a party member's message could set your displayed regen
+  rate to any number. Timers from other members are unaffected.
+- Add tests that build the plugin from an injector and start and stop it, so a
+  broken injection or an unbalanced registration fails the build.
+- Make the tests runnable on a JDK newer than 20, where Mockito's Byte Buddy
+  otherwise refuses to start the tests that mock RuneLite types.
+- Housekeeping: a non-breaking-space character in the Inspect/Examine reader is
+  now spelled as an escape (with a test), an unused import is removed, and
+  `COMPLIANCE.md` records a re-review of the party, venom and placement features.
 
 ## 0.9.8
 

@@ -165,6 +165,38 @@ public class NpcHealthRegenPluginBehaviorTest
 	}
 
 	@Test
+	public void partyWindowWithAnImpossibleRegenRateOrWidthIsIgnored() throws Exception
+	{
+		joinParty(301);
+		when(config.useSharedTimers()).thenReturn(true);
+		set("tick", 100L);
+
+		// A rate beyond the configurable maximum, from a member who claims to have measured it.
+		NpcHealthRegenPartyUpdate hugeRate = new NpcHealthRegenPartyUpdate(
+			301, 1, 42, 2_000_000_000, true, 30, 32, false);
+		hugeRate.setMemberId(2L);
+		plugin.applyPartyUpdate(hugeRate);
+		assertEquals(100, plugin.getActiveRegenTicks());
+		assertNull(plugin.getTimer().getUpcomingWindow(100, 100));
+
+		// A window as wide as the whole cycle says nothing about the phase, and this client
+		// never sends one.
+		NpcHealthRegenPartyUpdate wholeCycle = new NpcHealthRegenPartyUpdate(
+			301, 1, 42, 100, true, 0, 100, false);
+		wholeCycle.setMemberId(2L);
+		plugin.applyPartyUpdate(wholeCycle);
+		assertNull(plugin.getTimer().getUpcomingWindow(100, 100));
+
+		// A window that ends before it starts.
+		plugin.applyPartyUpdate(partyUpdate(2L, 301, 42, 40, 30));
+		assertNull(plugin.getTimer().getUpcomingWindow(100, 100));
+
+		// A sane one from the same member is still taken.
+		plugin.applyPartyUpdate(partyUpdate(2L, 301, 42, 30, 32));
+		assertEquals("Alice", plugin.getPartySourceName());
+	}
+
+	@Test
 	public void partyUpdatesAreHandledOnTheClientThread()
 	{
 		plugin.onNpcHealthRegenPartyUpdate(partyUpdate(2L, 301, 42, 30, 32));
