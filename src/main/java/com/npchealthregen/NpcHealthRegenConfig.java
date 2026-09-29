@@ -54,6 +54,14 @@ public interface NpcHealthRegenConfig extends Config
 	String HOTKEY_SECTION = "hotkeys";
 
 	@ConfigSection(
+		name = "Venom & dynamite",
+		description = "Venom ring and poison dynamite timing",
+		position = 15,
+		closedByDefault = true
+	)
+	String VENOM_SECTION = "venom";
+
+	@ConfigSection(
 		name = "Party",
 		description = "Share regen timers with RuneLite party members tracking the same NPC",
 		position = 25,
@@ -281,6 +289,34 @@ public interface NpcHealthRegenConfig extends Config
 	default Keybind resetHotkey()
 	{
 		return Keybind.NOT_SET;
+	}
+
+	@ConfigItem(
+		keyName = "showVenomRing",
+		name = "Venom ring",
+		description = "After you envenom the selected NPC (a successful hit wearing a serpentine helm with a venom "
+			+ "weapon), count down to its first venom damage and show when to send poison dynamite. Party "
+			+ "members tracking the same NPC see it too",
+		position = 0,
+		section = VENOM_SECTION
+	)
+	default boolean showVenomRing()
+	{
+		return true;
+	}
+
+	@Range(min = 0, max = 10)
+	@ConfigItem(
+		keyName = "dynamiteDelayTicks",
+		name = "Dynamite delay",
+		description = "Ticks from using poison dynamite on the NPC to its hit. Measured automatically the first "
+			+ "time you use Dynamite(p) on the selected NPC",
+		position = 1,
+		section = VENOM_SECTION
+	)
+	default int dynamiteDelayTicks()
+	{
+		return 5;
 	}
 
 	@ConfigItem(

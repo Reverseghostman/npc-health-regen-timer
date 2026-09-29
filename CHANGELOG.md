@@ -7,6 +7,17 @@
   compatible one; your own observations always take priority. New **Party**
   settings section to turn sharing and using shared timers on or off, and a
   **Timer from** overlay row naming the member whose timer you are using.
+- Add a venom ring: after a successful hit on the selected NPC wearing a
+  serpentine helm with a venom weapon, count down to the first venom damage
+  over the NPC and show when to send poison dynamite so it lands at full HP
+  (after regen restores the hit) but before the venom. Dynamite travel time is
+  measured from Dynamite(p) use to its hit. The ring is shared with party
+  members tracking the same NPC, and cancelled if the venom account logs out.
+  It predicts the first venom damage from the NPC's poison timer carried over
+  from its last life, and re-learns the delay from each proc.
+- Keep the selected NPC and its timer through a logout on the same world and
+  while it is out of view, carrying the tick count on by the time away.
+  Previously the timer was lost and had to be re-timed.
 
 ## 0.9.5
 

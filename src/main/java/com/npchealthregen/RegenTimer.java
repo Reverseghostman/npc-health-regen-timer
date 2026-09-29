@@ -502,6 +502,30 @@ final class RegenTimer
 		return phaseFromParty;
 	}
 
+	/**
+	 * Widens the phase by ticks on each side, for time that passed without
+	 * observing game ticks (such as while logged out).
+	 */
+	void widenPhase(long ticks)
+	{
+		if (ticks <= 0)
+		{
+			return;
+		}
+		// Negative ticks mean "no window", so clamp at zero.
+		if (chainDeaths > 0 && chainAnchorStart >= 0)
+		{
+			chainAnchorStart = Math.max(0, chainAnchorStart - ticks);
+			chainAnchorEnd += ticks;
+			applyDeathChain(state == State.WAITING_FOR_RESPAWN ? appliedRespawnTicks : 0);
+		}
+		else if (windowStartTick >= 0)
+		{
+			windowStartTick = Math.max(0, windowStartTick - ticks);
+			windowEndTick += ticks;
+		}
+	}
+
 	/** @return the next regen window as absolute {start, end} ticks, or null */
 	long[] getUpcomingWindowTicks(long now, int intervalTicks)
 	{
@@ -576,6 +600,12 @@ final class RegenTimer
 	long getRespawnTicksRemaining(long now)
 	{
 		return expectedRespawnTick < 0 ? -1 : Math.max(0, expectedRespawnTick - now);
+	}
+
+	/** @return the tick the NPC is expected to respawn, or -1 if unknown */
+	long getExpectedRespawnTick()
+	{
+		return expectedRespawnTick;
 	}
 
 	long getRespawnTicksElapsed(long now)
