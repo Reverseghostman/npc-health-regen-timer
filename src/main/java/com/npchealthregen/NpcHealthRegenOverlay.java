@@ -46,6 +46,11 @@ final class NpcHealthRegenOverlay extends OverlayPanel
 		{
 			addLine("Target", plugin.getTargetName(), Color.WHITE);
 		}
+		String partySource = plugin.getPartySourceName();
+		if (config.showPartySource() && partySource != null)
+		{
+			addLine("Timer from", partySource, LEARNED);
+		}
 		if (config.showTickCounter())
 		{
 			addLine("Game tick", Long.toString(plugin.getTick()), Color.WHITE);

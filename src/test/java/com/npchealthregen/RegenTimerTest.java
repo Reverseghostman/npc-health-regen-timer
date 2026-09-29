@@ -401,6 +401,83 @@ public class RegenTimerTest
 	}
 
 	@Test
+	public void sharedWindowFillsAnUncalibratedTimer()
+	{
+		RegenTimer timer = new RegenTimer();
+
+		assertTrue(timer.applySharedWindow(120, 124, 100));
+
+		assertEquals(RegenTimer.State.TRACKING, timer.getState());
+		assertTrue(timer.isPhaseFromParty());
+		RegenTimer.Window window = timer.getUpcomingWindow(100, 100);
+		assertEquals(20, window.getEarliestTicks());
+		assertEquals(24, window.getLatestTicks());
+	}
+
+	@Test
+	public void sharedWindowNarrowsACompatibleLocalWindow()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleHealth(10, 30, 80, 100, 0);
+		timer.sampleHealth(11, 30, 90, 100, 0);
+
+		// Local heal somewhere in 81-90; a party member saw the next one at 185-187.
+		assertTrue(timer.applySharedWindow(185, 187, 100));
+
+		RegenTimer.Window window = timer.getUpcomingWindow(100, 100);
+		assertEquals(85, window.getEarliestTicks());
+		assertEquals(87, window.getLatestTicks());
+	}
+
+	@Test
+	public void sharedWindowThatContradictsLocalObservationIsIgnored()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleHealth(10, 30, 80, 100, 0);
+		timer.sampleHealth(11, 30, 90, 100, 0);
+
+		assertFalse(timer.applySharedWindow(150, 155, 100));
+
+		assertFalse(timer.isPhaseFromParty());
+		assertEquals(81, timer.getUpcomingWindow(100, 100).getEarliestTicks());
+	}
+
+	@Test
+	public void widerSharedWindowDoesNotReplaceLocalPrecision()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.markNow(90, 100);
+
+		assertFalse(timer.applySharedWindow(185, 195, 100));
+		assertEquals(90, timer.getUpcomingWindow(100, 100).getEarliestTicks());
+	}
+
+	@Test
+	public void sharedWindowIsNotAppliedWhileDead()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.onDeath(10, 20);
+
+		assertFalse(timer.applySharedWindow(120, 124, 100));
+	}
+
+	@Test
+	public void firstOwnHealKeepsSharedPrecisionAndTakesOver()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.applySharedWindow(120, 120, 100);
+
+		// A splashed heal only narrows it to 119-122.
+		timer.sampleHealth(10, 30, 115, 100, 3);
+		timer.sampleHealth(11, 30, 122, 100, 3);
+
+		assertFalse(timer.isPhaseFromParty());
+		RegenTimer.Window window = timer.getUpcomingWindow(122, 100);
+		assertEquals(98, window.getEarliestTicks());
+		assertEquals(98, window.getLatestTicks());
+	}
+
+	@Test
 	public void carriedPhaseSharpensTheFirstSplashedHealAfterRespawn()
 	{
 		RegenTimer timer = new RegenTimer();

@@ -54,6 +54,14 @@ public interface NpcHealthRegenConfig extends Config
 	String HOTKEY_SECTION = "hotkeys";
 
 	@ConfigSection(
+		name = "Party",
+		description = "Share regen timers with RuneLite party members tracking the same NPC",
+		position = 25,
+		closedByDefault = true
+	)
+	String PARTY_SECTION = "party";
+
+	@ConfigSection(
 		name = "Timing (advanced)",
 		description = "Fallback timings and how observations are interpreted",
 		position = 30,
@@ -273,6 +281,44 @@ public interface NpcHealthRegenConfig extends Config
 	default Keybind resetHotkey()
 	{
 		return Keybind.NOT_SET;
+	}
+
+	@ConfigItem(
+		keyName = "shareWithParty",
+		name = "Share my timer",
+		description = "Send your selected NPC's regen window to your RuneLite party. Only party members on the "
+			+ "same world tracking the same NPC use it",
+		position = 0,
+		section = PARTY_SECTION
+	)
+	default boolean shareWithParty()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "useSharedTimers",
+		name = "Use party timers",
+		description = "Refine or fill in your timer from party members tracking the same NPC. Your own "
+			+ "observations take priority when they disagree",
+		position = 1,
+		section = PARTY_SECTION
+	)
+	default boolean useSharedTimers()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "showPartySource",
+		name = "Show who shared it",
+		description = "Show the party member whose timer you are using, until your own observations take over",
+		position = 2,
+		section = PARTY_SECTION
+	)
+	default boolean showPartySource()
+	{
+		return true;
 	}
 
 	@ConfigItem(

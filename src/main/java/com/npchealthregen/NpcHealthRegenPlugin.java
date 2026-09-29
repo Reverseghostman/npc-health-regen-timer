@@ -29,8 +29,13 @@ import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.game.NPCManager;
+import net.runelite.client.events.PartyChanged;
 import net.runelite.client.input.KeyListener;
 import net.runelite.client.input.KeyManager;
+import net.runelite.client.party.PartyMember;
+import net.runelite.client.party.PartyService;
+import net.runelite.client.party.WSClient;
+import net.runelite.client.party.events.UserJoin;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
@@ -44,6 +49,9 @@ import net.runelite.client.util.Text;
 public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 {
 	private static final int INSPECTION_RESULT_TIMEOUT_TICKS = 16;
+	// A party update can arrive in the sender's tick or the next, either side of
+	// this client's own tick boundary.
+	private static final int PARTY_LATENCY_TICKS = 1;
 
 	private enum ObservationSource
 	{
@@ -86,6 +94,12 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	@Inject
 	private NPCManager npcManager;
 
+	@Inject
+	private PartyService partyService;
+
+	@Inject
+	private WSClient wsClient;
+
 	private final RegenTimer timer = new RegenTimer();
 	private final Map<NPC, WorldPoint> observedSpawnPoints = new IdentityHashMap<>();
 	private NPC target;
@@ -114,6 +128,9 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	private long lastHealthSampleTick = -1;
 	private int maximumHitpoints = -1;
 	private int baseDefence = -1;
+	private String lastSharedKey;
+	private boolean shareRequested;
+	private String partySourceName;
 
 	@Override
 	protected void startUp()
@@ -121,11 +138,13 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		overlayManager.add(overlay);
 		overlayManager.add(sceneOverlay);
 		keyManager.registerKeyListener(this);
+		wsClient.registerMessage(NpcHealthRegenPartyUpdate.class);
 	}
 
 	@Override
 	protected void shutDown()
 	{
+		wsClient.unregisterMessage(NpcHealthRegenPartyUpdate.class);
 		keyManager.unregisterKeyListener(this);
 		overlayManager.remove(sceneOverlay);
 		overlayManager.remove(overlay);
@@ -153,6 +172,91 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 				processInspectionResult();
 			}
 		}
+		shareTimer();
+	}
+
+	/** Sends the tracked NPC's regen window to the party whenever it changes. */
+	private void shareTimer()
+	{
+		if (!config.shareWithParty() || target == null
+			|| timer.getState() != RegenTimer.State.TRACKING || !partyService.isInParty()
+			|| partyService.getLocalMember() == null)
+		{
+			return;
+		}
+
+		long[] window = timer.getUpcomingWindowTicks(tick, activeRegenTicks);
+		if (window == null || window[1] - window[0] >= activeRegenTicks)
+		{
+			return;
+		}
+
+		int world = client.getWorld();
+		// The absolute window only moves when it is refined or rolls to the next
+		// cycle, so this sends at most about once per regen cycle when idle.
+		String key = world + ":" + targetNpcId + ":" + targetNpcIndex + ":" + activeRegenTicks
+			+ ":" + window[0] + ":" + window[1];
+		if (!shareRequested && key.equals(lastSharedKey))
+		{
+			return;
+		}
+
+		partyService.send(new NpcHealthRegenPartyUpdate(world, targetNpcId, targetNpcIndex,
+			activeRegenTicks, learnedRegen, (int) (window[0] - tick), (int) (window[1] - tick)));
+		lastSharedKey = key;
+		shareRequested = false;
+	}
+
+	@Subscribe
+	public void onNpcHealthRegenPartyUpdate(NpcHealthRegenPartyUpdate update)
+	{
+		// Party messages arrive on the websocket thread.
+		clientThread.invokeLater(() -> applyPartyUpdate(update));
+	}
+
+	void applyPartyUpdate(NpcHealthRegenPartyUpdate update)
+	{
+		PartyMember local = partyService.getLocalMember();
+		if (!config.useSharedTimers() || target == null || local == null
+			|| local.getMemberId() == update.getMemberId()
+			|| update.getWorld() != client.getWorld()
+			|| update.getNpcId() != targetNpcId || update.getNpcIndex() != targetNpcIndex
+			|| update.getRegenTicks() <= 0)
+		{
+			return;
+		}
+
+		if (update.getRegenTicks() != activeRegenTicks)
+		{
+			// Only adopt a rate the sender measured, and never over our own.
+			if (learnedRegen || !update.isRegenLearned())
+			{
+				return;
+			}
+			activeRegenTicks = update.getRegenTicks();
+		}
+
+		long start = tick + update.getWindowStartOffset() - PARTY_LATENCY_TICKS;
+		long end = tick + update.getWindowEndOffset() + PARTY_LATENCY_TICKS;
+		if (timer.applySharedWindow(start, end, activeRegenTicks))
+		{
+			PartyMember sender = partyService.getMemberById(update.getMemberId());
+			partySourceName = sender == null ? "Party member" : sender.getDisplayName();
+		}
+	}
+
+	@Subscribe
+	public void onUserJoin(UserJoin event)
+	{
+		// Bring a newly joined member up to date on the next tick.
+		shareRequested = true;
+	}
+
+	@Subscribe
+	public void onPartyChanged(PartyChanged event)
+	{
+		lastSharedKey = null;
+		shareRequested = true;
 	}
 
 	@Subscribe
@@ -647,6 +751,12 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		baseDefence = -1;
 		resetObservationSource();
 		timer.reset();
+	}
+
+	/** @return who shared the timer, while it still rests on their phase */
+	String getPartySourceName()
+	{
+		return timer.isPhaseFromParty() ? partySourceName : null;
 	}
 
 	private void resetObservationSource()

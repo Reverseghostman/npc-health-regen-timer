@@ -58,6 +58,23 @@ regen rate and phase, restores **Default regen interval**, and preserves its
 respawn measurement. Continue inspecting periodically to refine the countdown;
 a stale panel cannot establish an exact heal tick.
 
+## Sharing timers with a party
+
+Join the same RuneLite party (the core **Party** plugin) as your friends. When
+you each select the same NPC on the same world, your regen windows are shared
+automatically:
+
+- a member with no timer yet picks up yours straight away, including a learned
+  regen rate
+- a member with a rougher window is narrowed by yours when the two agree
+- your own observations always take priority: a shared window that contradicts
+  them is ignored, and your first own heal takes over from a shared one
+
+Party members count ticks separately, so a shared window is widened by one
+tick on each side for delivery timing. The overlay shows **Timer from** with
+the member's name while you are using their timer. Updates are only sent when
+the window changes, about once per regen cycle when nothing new is seen.
+
 ## Settings
 
 The standard options sit at the top of the plugin's settings:
@@ -75,5 +92,7 @@ Everything else is in collapsible sections underneath, closed by default:
   full HP, Defence at full HP, observation source, tick counter) and when the
   countdown turns orange
 - **Hotkeys**: **Mark regeneration now** and **Reset timer**
+- **Party**: share your timer, use party members' timers, and show who shared
+  the timer you are using
 - **Timing (advanced)**: learning, fallback regen and respawn times, and the
   splash weapon delay
