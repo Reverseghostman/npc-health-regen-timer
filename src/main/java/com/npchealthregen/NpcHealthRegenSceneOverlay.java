@@ -20,8 +20,6 @@ import net.runelite.client.ui.overlay.OverlayUtil;
 
 final class NpcHealthRegenSceneOverlay extends Overlay
 {
-	private static final Color TARGET_BORDER = new Color(80, 220, 120);
-	private static final Color TARGET_FILL = new Color(80, 220, 120, 35);
 	private static final Color WARNING = new Color(255, 170, 0);
 	private static final Color RESPAWN_FILL = new Color(255, 170, 0, 35);
 	private static final Color TEXT = Color.WHITE;
@@ -61,14 +59,13 @@ final class NpcHealthRegenSceneOverlay extends Overlay
 
 	private void renderTarget(Graphics2D graphics, NPC target)
 	{
-		if (config.highlightSelectedNpc())
+		Shape highlight = highlightShape(target, config.npcHighlight());
+		if (highlight != null)
 		{
-			Shape hull = target.getConvexHull();
-			if (hull == null)
-			{
-				hull = target.getCanvasTilePoly();
-			}
-			renderShape(graphics, hull, TARGET_BORDER, TARGET_FILL);
+			Color border = config.highlightColour();
+			Color fill = new Color(border.getRed(), border.getGreen(), border.getBlue(),
+				border.getAlpha() * 35 / 255);
+			renderShape(graphics, highlight, border, fill);
 		}
 
 		if (!config.showOverheadRegenCountdown())
@@ -94,6 +91,50 @@ final class NpcHealthRegenSceneOverlay extends Overlay
 		}
 	}
 
+	private Shape highlightShape(NPC target, NpcHealthRegenConfig.NpcHighlight style)
+	{
+		switch (style)
+		{
+			case TILE:
+				// Follows the model smoothly as it walks, covering its full size.
+				return target.getCanvasTilePoly();
+			case TRUE_TILE:
+			{
+				int size = target.getTransformedComposition() == null
+					? 1 : target.getTransformedComposition().getSize();
+				return tileArea(target.getWorldLocation(), size);
+			}
+			case HULL:
+				return target.getConvexHull();
+			default:
+				return null;
+		}
+	}
+
+	/** The on-screen area of a size x size NPC whose south-west tile is worldPoint. */
+	private Polygon tileArea(WorldPoint worldPoint, int size)
+	{
+		if (worldPoint == null)
+		{
+			return null;
+		}
+
+		LocalPoint localPoint = LocalPoint.fromWorld(client, worldPoint);
+		if (localPoint == null)
+		{
+			return null;
+		}
+
+		LocalPoint centre = areaCentre(localPoint, size);
+		return Perspective.getCanvasTileAreaPoly(client, centre, Math.max(1, size));
+	}
+
+	private static LocalPoint areaCentre(LocalPoint southWest, int size)
+	{
+		int offset = Perspective.LOCAL_TILE_SIZE * (Math.max(1, size) - 1) / 2;
+		return southWest.plus(offset, offset);
+	}
+
 	private void renderRespawnTile(Graphics2D graphics)
 	{
 		WorldPoint worldPoint = plugin.getLastTargetPoint();
@@ -109,9 +150,7 @@ final class NpcHealthRegenSceneOverlay extends Overlay
 		}
 
 		int size = Math.max(1, plugin.getLastTargetSize());
-		LocalPoint centre = localPoint.plus(
-			Perspective.LOCAL_TILE_SIZE * (size - 1) / 2,
-			Perspective.LOCAL_TILE_SIZE * (size - 1) / 2);
+		LocalPoint centre = areaCentre(localPoint, size);
 		Polygon polygon = Perspective.getCanvasTileAreaPoly(client, centre, size);
 		renderShape(graphics, polygon, WARNING, RESPAWN_FILL);
 

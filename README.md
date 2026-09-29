@@ -58,10 +58,22 @@ regen rate and phase, restores **Default regen interval**, and preserves its
 respawn measurement. Continue inspecting periodically to refine the countdown;
 a stale panel cannot establish an exact heal tick.
 
-## Display options
+## Settings
 
-- regeneration and respawn countdowns
-- selected NPC and respawn-tile highlights
-- current and maximum Hitpoints
-- inspected Hitpoints and Defence from the latest result (shown by default)
-- estimated time until full health
+The standard options sit at the top of the plugin's settings:
+
+- **Highlight selected NPC**: **Tile** (default, follows the NPC as it walks),
+  **True tile** (its server-side tile), **Hull** or **Off**, with a colour
+- overhead regen countdown
+- respawn tile highlight and countdown while the NPC is dead
+- seconds alongside ticks
+
+Everything else is in collapsible sections underneath, closed by default:
+
+- **Overlay details**: which rows the panel shows (NPC name, regen and respawn
+  rates, inspected Hitpoints and Defence, current and maximum HP, time until
+  full HP, Defence at full HP, observation source, tick counter) and when the
+  countdown turns orange
+- **Hotkeys**: **Mark regeneration now** and **Reset timer**
+- **Timing (advanced)**: learning, fallback regen and respawn times, and the
+  splash weapon delay
