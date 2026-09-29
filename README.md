@@ -63,9 +63,11 @@ a stale panel cannot establish an exact heal tick.
 For envenoming an NPC on one account and landing poison dynamite on another
 before the venom first damages it:
 
-1. Wear a serpentine helm with a venom weapon (such as a Trident of the swamp)
-   on the venom account. A successful hit on the selected NPC, such as a Snare
-   just before its regen, starts a ring over the NPC.
+1. Wear a charged serpentine helm with a toxic blowpipe, trident of the swamp
+   or toxic staff of the dead on the venom account. A landed hit on the
+   selected NPC, such as a Snare just before its regen, starts a ring over the
+   NPC. A hit that lands always shows at least 1; a miss or splash shows 0 and
+   cannot envenom, so it starts nothing.
 2. The ring counts down to the venom's first damage. Below it:
    - **Wait Nt**: regen has not yet restored the hit's damage
    - **Send Nt**: send the dynamite now; N ticks are left to send it
@@ -74,13 +76,55 @@ before the venom first damages it:
 3. Put both accounts in the same RuneLite party with the NPC selected on each,
    and the dynamite account shows the same ring.
 
-The send window allows for the dynamite's travel time, measured the first time
-you use Dynamite(p) on the selected NPC (or set **Dynamite delay**). The first
+### Venom chance
+
+The info panel's **Venom chance** row shows how likely each landed hit is to
+envenom the selected NPC, from the weapon and helm you are wearing. It uses the
+[OSRS Wiki](https://oldschool.runescape.wiki/w/Venom) figures for an NPC target:
+
+| Wearing | Chance per landed hit |
+| --- | --- |
+| Toxic blowpipe, trident of the swamp or toxic staff of the dead, with a charged serpentine helm | 100% (the ring starts) |
+| The same weapons without the helm | 25% |
+| Noxious halberd | 33%, or 50% with the helm |
+
+Only the 100% setups start a ring, because a ring for a venom that may not
+happen would send the dynamite for nothing. The row is green at 100% and orange
+below it, which means no ring will start. The helm alone (1/6 with a non-poisoned melee weapon, 1/2 with poisoned
+weapons) is not modelled. RuneLite does not know which NPCs are immune to venom,
+so the row assumes the NPC is not.
+
+The send window allows for the dynamite's travel time, measured each time you
+use Dynamite(p) on the selected NPC (or set **Dynamite delay**; selecting another
+NPC or changing that setting discards the measurement). The first
 venom damage normally lands 30 ticks after the venom hit. The NPC's poison
 timer does not restart on each envenoming, so after a kill that was not a
 poison or venom hit, the ring counts only the part of the timer that remains.
 The first-hit delay is re-learned from each proc. Logging the venom account out
 cancels its ring on the party.
+
+## Working alongside other plugins
+
+Several plugins draw above an NPC's head, at the same spot as this one's regen
+countdown: **Poison Dynamite** (its ring) and **Poisoned NPCs** (its timer) at
+the same height, and **Venom Timer** (up to four lines, running down through it).
+Drawn there together they overlap.
+
+By default the placement is **Automatic**: the countdown and venom ring stay
+centred above the NPC's head, and move beside the NPC, clear of all three, while
+any of those plugins is enabled. The venom label and ring are stacked above the
+countdown in pixels, so they cannot overlap it at any zoom. The info panel no
+longer asks to be first in its corner, so other panels keep their order.
+
+Nothing else here interferes with those plugins, or with **Venomed NPC Tracker**,
+which only recolours NPC menu entries. This plugin never consumes or alters a
+game event, and its **Select / Clear / Recalibrate Regen Timer** entries only
+appear next to Examine while Shift is held.
+
+To choose yourself, open **Overlay placement** in the settings: **Above head**,
+**Beside NPC (right)** or **Beside NPC (left)**, with **Side distance** for how
+far from the NPC's centre it sits. Only Automatic looks at other plugins, and it
+reads just their names and whether they are enabled.
 
 ## Logging out and losing sight of the NPC
 
@@ -124,7 +168,10 @@ Everything else is in collapsible sections underneath, closed by default:
   rates, inspected Hitpoints and Defence, current and maximum HP, time until
   full HP, Defence at full HP, observation source, tick counter) and when the
   countdown turns orange
-- **Venom & dynamite**: the venom ring and the dynamite delay
+- **Overlay placement**: above the head or beside the NPC (Automatic by
+  default), and how far beside it
+- **Venom & dynamite**: the venom ring, the venom chance row and the dynamite
+  delay
 - **Hotkeys**: **Mark regeneration now** and **Reset timer**
 - **Party**: share your timer, use party members' timers, and show who shared
   the timer you are using

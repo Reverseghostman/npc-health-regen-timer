@@ -35,6 +35,27 @@ public interface NpcHealthRegenConfig extends Config
 		}
 	}
 
+	enum OverheadPlacement
+	{
+		AUTO("Automatic"),
+		ABOVE("Above head"),
+		RIGHT("Beside NPC (right)"),
+		LEFT("Beside NPC (left)");
+
+		private final String name;
+
+		OverheadPlacement(String name)
+		{
+			this.name = name;
+		}
+
+		@Override
+		public String toString()
+		{
+			return name;
+		}
+	}
+
 	// Standard options stay at the top; everything else is in closed sections.
 
 	@ConfigSection(
@@ -44,6 +65,14 @@ public interface NpcHealthRegenConfig extends Config
 		closedByDefault = true
 	)
 	String OVERLAY_SECTION = "overlayDetails";
+
+	@ConfigSection(
+		name = "Overlay placement",
+		description = "Where the overhead countdown and venom ring go, so they stay clear of other plugins",
+		position = 12,
+		closedByDefault = true
+	)
+	String PLACEMENT_SECTION = "placement";
 
 	@ConfigSection(
 		name = "Hotkeys",
@@ -268,6 +297,33 @@ public interface NpcHealthRegenConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "overheadPlacement",
+		name = "Overhead placement",
+		description = "Above the head, or beside the NPC. Poison Dynamite, Poisoned NPCs and Venom Timer draw above the "
+			+ "head, so Automatic moves the countdown and venom ring beside the NPC while any of them is enabled",
+		position = 0,
+		section = PLACEMENT_SECTION
+	)
+	default OverheadPlacement overheadPlacement()
+	{
+		return OverheadPlacement.AUTO;
+	}
+
+	@Range(min = 0, max = 300)
+	@ConfigItem(
+		keyName = "overheadSideOffset",
+		name = "Side distance",
+		description = "Pixels between the NPC's centre and the near edge of the countdown and venom ring when they "
+			+ "are placed beside it",
+		position = 1,
+		section = PLACEMENT_SECTION
+	)
+	default int overheadSideOffset()
+	{
+		return OverheadLayout.DEFAULT_SIDE_OFFSET;
+	}
+
+	@ConfigItem(
 		keyName = "markRegenHotkey",
 		name = "Mark regeneration now",
 		description = "Manually set the current game tick as the NPC's regeneration tick",
@@ -305,13 +361,26 @@ public interface NpcHealthRegenConfig extends Config
 		return true;
 	}
 
+	@ConfigItem(
+		keyName = "showVenomChance",
+		name = "Venom chance",
+		description = "Show your chance to envenom the selected NPC in the info panel, from the venom weapon and "
+			+ "charged serpentine helm you are wearing. NPCs immune to venom are not detected",
+		position = 1,
+		section = VENOM_SECTION
+	)
+	default boolean showVenomChance()
+	{
+		return true;
+	}
+
 	@Range(min = 0, max = 10)
 	@ConfigItem(
 		keyName = "dynamiteDelayTicks",
 		name = "Dynamite delay",
-		description = "Ticks from using poison dynamite on the NPC to its hit. Measured automatically the first "
-			+ "time you use Dynamite(p) on the selected NPC",
-		position = 1,
+		description = "Ticks from using poison dynamite on the NPC to its hit. Measured automatically each time "
+			+ "you use Dynamite(p) on the selected NPC, after which the measured value is used",
+		position = 2,
 		section = VENOM_SECTION
 	)
 	default int dynamiteDelayTicks()
