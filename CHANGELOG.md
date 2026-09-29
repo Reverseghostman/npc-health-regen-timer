@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.5
+
+- Reorganise the settings: the standard options (highlight, overhead countdown,
+  respawn tile, seconds) stay at the top, and the rest move into collapsible
+  **Overlay details**, **Hotkeys** and **Timing (advanced)** sections, closed by
+  default. Existing settings are kept.
+- Replace the on/off NPC hull highlight with a style choice: **Tile** (new
+  default), **True tile**, **Hull** or **Off**, plus a highlight colour.
+
 ## 0.9.4
 
 - Fix the regen countdown drifting late over back-to-back kills. The countdown
