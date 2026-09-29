@@ -278,6 +278,8 @@ public class NpcHealthRegenPluginBehaviorTest
 		RegenTimer.Window window = plugin.getTimer().getUpcomingWindow(200, 100);
 		assertEquals(49, window.getEarliestTicks());
 		assertEquals(51, window.getLatestTicks());
+		// An unseen kill in that time would have moved it, so it is no longer certain.
+		assertTrue(plugin.getTimer().isUnverified());
 
 		NPC again = npc(1, 42);
 		plugin.onNpcSpawned(new NpcSpawned(again));
@@ -311,6 +313,7 @@ public class NpcHealthRegenPluginBehaviorTest
 
 		assertTrue(plugin.isTargetOutOfView());
 		assertNotNull(plugin.getTimer().getUpcomingWindow(60, 100));
+		assertTrue(plugin.getTimer().isUnverified());
 
 		Player player = mock(Player.class);
 		when(client.getLocalPlayer()).thenReturn(player);
@@ -321,6 +324,193 @@ public class NpcHealthRegenPluginBehaviorTest
 		when(player.getWorldLocation()).thenReturn(new WorldPoint(3300, 3200, 0));
 		plugin.onGameTick(new GameTick());
 		assertNull(plugin.getTargetName());
+	}
+
+	@Test
+	public void sharesFlagAPhaseCarriedThroughTimeOutOfView() throws Exception
+	{
+		joinParty(301);
+		when(config.shareWithParty()).thenReturn(true);
+		plugin.getTimer().markNow(50, 100);
+		set("tick", 60L);
+		when(target.getHealthRatio()).thenReturn(-1);
+
+		plugin.onNpcDespawned(new NpcDespawned(target));
+		plugin.onNpcSpawned(new NpcSpawned(npc(1, 42)));
+		plugin.onGameTick(new GameTick());
+
+		ArgumentCaptor<NpcHealthRegenPartyUpdate> sent = ArgumentCaptor.forClass(NpcHealthRegenPartyUpdate.class);
+		verify(partyService).send(sent.capture());
+		assertTrue(sent.getValue().isUnverified());
+	}
+
+	@Test
+	public void sharesDoNotFlagAPhaseThatWasObserved() throws Exception
+	{
+		joinParty(301);
+		when(config.shareWithParty()).thenReturn(true);
+		plugin.getTimer().markNow(50, 100);
+		set("tick", 60L);
+
+		plugin.onGameTick(new GameTick());
+
+		ArgumentCaptor<NpcHealthRegenPartyUpdate> sent = ArgumentCaptor.forClass(NpcHealthRegenPartyUpdate.class);
+		verify(partyService).send(sent.capture());
+		assertFalse(sent.getValue().isUnverified());
+	}
+
+	@Test
+	public void partyWindowIsTakenWhileTheNpcIsOutOfView() throws Exception
+	{
+		joinParty(301);
+		when(config.useSharedTimers()).thenReturn(true);
+		plugin.getTimer().markNow(50, 100);
+		when(target.getHealthRatio()).thenReturn(-1);
+		set("tick", 100L);
+		plugin.onNpcDespawned(new NpcDespawned(target));
+		assertNull(plugin.getTarget());
+
+		// A member who kept watching sends a window that disagrees with the one carried on.
+		plugin.applyPartyUpdate(partyUpdate(2L, 301, 42, 30, 32));
+
+		RegenTimer.Window window = plugin.getTimer().getUpcomingWindow(100, 100);
+		assertEquals(29, window.getEarliestTicks());
+		assertEquals(33, window.getLatestTicks());
+		assertEquals("Alice", plugin.getPartySourceName());
+	}
+
+	@Test
+	public void partyWindowIsNotTakenWhileLoggedOutBecauseNoTicksArriveToPlaceIt() throws Exception
+	{
+		Client client = joinParty(301);
+		when(config.useSharedTimers()).thenReturn(true);
+		select(target);
+		plugin.getTimer().markNow(50, 100);
+		set("tick", 100L);
+		plugin.onGameStateChanged(gameState(GameState.LOGIN_SCREEN));
+
+		plugin.applyPartyUpdate(partyUpdate(2L, 301, 42, 30, 32));
+
+		assertNull(plugin.getPartySourceName());
+		assertEquals(50, plugin.getTimer().getUpcomingWindow(100, 100).getEarliestTicks());
+
+		// Once back, the next window is taken.
+		set("awayMillis", System.currentTimeMillis() - 30_000L);
+		plugin.onGameStateChanged(gameState(GameState.LOGGED_IN));
+		plugin.applyPartyUpdate(partyUpdate(2L, 301, 42, 30, 32));
+		assertEquals("Alice", plugin.getPartySourceName());
+	}
+
+	@Test
+	public void partyWindowIsNotTakenOnceNoNpcIsSelected() throws Exception
+	{
+		joinParty(301);
+		when(config.useSharedTimers()).thenReturn(true);
+		invoke("clearTarget");
+
+		plugin.applyPartyUpdate(partyUpdate(2L, 301, 42, 30, 32));
+
+		assertNull(plugin.getTimer().getUpcomingWindow(0, 100));
+	}
+
+	/**
+	 * The target dies at tick 100 with the player at its spawn, the player stands {@code tilesAway}
+	 * tiles off from the next tick, and it is seen alive again at tick 200.
+	 */
+	private void deathThenRespawnSeenFrom(int tilesAway, int plane) throws Exception
+	{
+		Client client = mock(Client.class);
+		Player player = mock(Player.class);
+		when(client.getLocalPlayer()).thenReturn(player);
+		when(player.getWorldLocation()).thenReturn(new WorldPoint(3200, 3200, 0));
+		set("client", client);
+		plugin.getTimer().markNow(50, 100);
+		set("tick", 100L);
+		kill();
+
+		when(player.getWorldLocation()).thenReturn(new WorldPoint(3200, 3200 + tilesAway, plane));
+		plugin.onGameTick(new GameTick());
+		set("tick", 200L);
+		plugin.onNpcSpawned(new NpcSpawned(npc(1, 42)));
+	}
+
+	@Test
+	public void respawnSeenAfterWalkingOutOfRangeIsLateAndNotLearned() throws Exception
+	{
+		deathThenRespawnSeenFrom(30, 0);
+
+		assertEquals(0, plugin.getActiveRespawnTicks());
+		verify(profiles, never()).save(anyInt(), anyInt(), anyInt());
+		assertTrue(plugin.getTimer().isUnverified());
+		// Nothing says when it came back, so the phase admits that instead of being tens of ticks out.
+		assertTrue(plugin.getTimer().getPhaseUncertaintyTicks() >= 100);
+	}
+
+	@Test
+	public void aKnownRespawnTimeBoundsALateSightingToATickOrTwo() throws Exception
+	{
+		when(profiles.load(1)).thenReturn(new NpcTimingProfileStore.Profile(0, 50));
+		select(target);
+
+		deathThenRespawnSeenFrom(30, 0);
+
+		// It came back at 150, whenever it was seen: the heal at 50 moves by the 50 dead ticks (less
+		// the 0-2 the countdown keeps running), give or take the tick or two this kill can differ by.
+		long[] window = plugin.getTimer().getUpcomingWindowTicks(200, 100);
+		assertEquals(196, window[0]);
+		assertEquals(202, window[1]);
+		assertEquals(50, plugin.getActiveRespawnTicks());
+		verify(profiles, never()).save(anyInt(), anyInt(), anyInt());
+		assertTrue(plugin.getTimer().isUnverified());
+	}
+
+	@Test
+	public void respawnSeenFromFifteenTilesIsOnTimeAndLearned() throws Exception
+	{
+		deathThenRespawnSeenFrom(15, 0);
+
+		assertEquals(100, plugin.getActiveRespawnTicks());
+		verify(profiles).save(1, 0, 100);
+		assertFalse(plugin.getTimer().isUnverified());
+	}
+
+	@Test
+	public void respawnSeenFromSixteenTilesIsLate() throws Exception
+	{
+		deathThenRespawnSeenFrom(16, 0);
+
+		assertTrue(plugin.getTimer().isUnverified());
+		verify(profiles, never()).save(anyInt(), anyInt(), anyInt());
+	}
+
+	@Test
+	public void respawnSeenFromAnotherPlaneIsLate() throws Exception
+	{
+		deathThenRespawnSeenFrom(0, 1);
+
+		assertTrue(plugin.getTimer().isUnverified());
+		verify(profiles, never()).save(anyInt(), anyInt(), anyInt());
+	}
+
+	@Test
+	public void respawnSeenAfterALogoutIsLateAndUnverified() throws Exception
+	{
+		Client client = mock(Client.class);
+		when(client.getWorld()).thenReturn(301);
+		set("client", client);
+		select(target);
+		plugin.getTimer().markNow(50, 100);
+		set("tick", 100L);
+		kill();
+
+		plugin.onGameStateChanged(gameState(GameState.LOGIN_SCREEN));
+		set("awayMillis", System.currentTimeMillis() - 60_000L);
+		plugin.onGameStateChanged(gameState(GameState.LOGGED_IN));
+		plugin.onNpcSpawned(new NpcSpawned(npc(1, 42)));
+
+		assertTrue(plugin.getTimer().isUnverified());
+		assertEquals(0, plugin.getActiveRespawnTicks());
+		verify(profiles, never()).save(anyInt(), anyInt(), anyInt());
 	}
 
 	private static NpcHealthRegenVenomUpdate venomUpdate(boolean cancelled)
@@ -583,7 +773,7 @@ public class NpcHealthRegenPluginBehaviorTest
 		int startOffset, int endOffset)
 	{
 		NpcHealthRegenPartyUpdate update = new NpcHealthRegenPartyUpdate(
-			world, 1, npcIndex, 100, true, startOffset, endOffset);
+			world, 1, npcIndex, 100, true, startOffset, endOffset, false);
 		update.setMemberId(memberId);
 		return update;
 	}

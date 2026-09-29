@@ -44,9 +44,10 @@ The source code:
   executable downloads or dynamically loaded external code;
 - makes no network requests of its own and contains no third-party data client.
   When the player has joined a RuneLite party, it sends the selected NPC's
-  world, NPC ID, NPC index, regen window and venom-ring timing (as tick
-  offsets) through RuneLite's own party service, and uses the same data from
-  party members tracking the same NPC. Both directions can be turned off in the Party
+  world, NPC ID, NPC index, regen window (as tick offsets, with whether it was
+  carried through time the NPC was out of view) and venom-ring timing through
+  RuneLite's own party service, and uses the same data from party members
+  tracking the same NPC. Both directions can be turned off in the Party
   settings. Party membership and member names are handled by RuneLite;
 - does not transmit account names, player names, combat results or saved
   learned timings;
@@ -82,6 +83,11 @@ The review above is dated 22 September 2026. Party sharing, the venom ring, the
 venom chance row and overlay placement were added afterwards. The text above
 describes what they do, but they have not been checked against the guidelines
 again, so the date is left as it was.
+
+Version 0.9.8 fixes party timers staying wrong after an account loses sight of
+the NPC. It adds one true/false field to the shared window (whether it was carried
+through time out of view) and changes how a received window is merged. It adds no
+new kind of data, request or on-screen prompt.
 
 Open question for those features: the venom ring's Wait, Send and Too late labels
 tell the player when to send poison dynamite. That is a timing prompt, not only
