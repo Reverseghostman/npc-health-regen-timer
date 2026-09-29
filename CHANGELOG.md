@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Share regen timers with RuneLite party members tracking the same NPC on the
+  same world. A shared window fills in an uncalibrated timer or narrows a
+  compatible one; your own observations always take priority. New **Party**
+  settings section to turn sharing and using shared timers on or off, and a
+  **Timer from** overlay row naming the member whose timer you are using.
+
 ## 0.9.5
 
 - Reorganise the settings: the standard options (highlight, overhead countdown,

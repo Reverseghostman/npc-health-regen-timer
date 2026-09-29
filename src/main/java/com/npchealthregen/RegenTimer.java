@@ -66,6 +66,9 @@ final class RegenTimer
 	private int deathPauseAdjustMax = DEFAULT_DEATH_PAUSE_ADJUST_MAX;
 	private boolean deathPauseLearned;
 	private boolean deathPauseUpdated;
+	// The current phase came from a party member rather than this client's own
+	// observations; cleared by the next local observation.
+	private boolean phaseFromParty;
 	// Consecutive deaths since the phase was last observed. The carried window is
 	// always rebuilt from the phase before the first of them, so a later
 	// calibration can re-derive it rather than compound per-kill rounding.
@@ -80,6 +83,7 @@ final class RegenTimer
 	void reset()
 	{
 		clearDeathChain();
+		phaseFromParty = false;
 		inspectionPhase.reset();
 		state = State.OBSERVING;
 		lastHealthRatio = -1;
@@ -246,6 +250,7 @@ final class RegenTimer
 			windowStartTick = start;
 			windowEndTick = end;
 			state = State.TRACKING;
+			phaseFromParty = false;
 		}
 		return learned;
 	}
@@ -419,23 +424,101 @@ final class RegenTimer
 			calibrateDeathPause(start, end, interval);
 		}
 
-		long[] result = {start, end};
-		if (windowStartTick >= 0 && interval > 0)
-		{
-			long first = -Math.floorDiv(windowEndTick - start, interval);
-			long last = Math.floorDiv(end - windowStartTick, interval);
-			if (first == last)
-			{
-				long narrowedStart = Math.max(start, windowStartTick + first * interval);
-				long narrowedEnd = Math.min(end, windowEndTick + first * interval);
-				if (narrowedStart <= narrowedEnd)
-				{
-					result = new long[]{narrowedStart, narrowedEnd};
-				}
-			}
-		}
+		long[] result = narrowWithCarriedPhase(start, end, interval);
 		clearDeathChain();
 		return result;
+	}
+
+	/**
+	 * Intersects [start, end] with the carried window when exactly one periodic
+	 * translation of it overlaps; otherwise returns [start, end] unchanged.
+	 */
+	private long[] narrowWithCarriedPhase(long start, long end, int interval)
+	{
+		long[] narrowed = periodicIntersection(start, end, interval);
+		return narrowed != null ? narrowed : new long[]{start, end};
+	}
+
+	/**
+	 * @return [start, end] intersected with the one periodic translation of the
+	 * current window that overlaps it, or null if none or several overlap
+	 */
+	private long[] periodicIntersection(long start, long end, int interval)
+	{
+		if (windowStartTick < 0 || interval <= 0)
+		{
+			return null;
+		}
+
+		long first = -Math.floorDiv(windowEndTick - start, interval);
+		long last = Math.floorDiv(end - windowStartTick, interval);
+		if (first != last)
+		{
+			return null;
+		}
+		return new long[]{
+			Math.max(start, windowStartTick + first * interval),
+			Math.min(end, windowEndTick + first * interval)};
+	}
+
+	/**
+	 * Merges a regen window shared by a party member tracking the same NPC,
+	 * already converted to this client's ticks.
+	 * @return whether the local window changed
+	 */
+	boolean applySharedWindow(long start, long end, int interval)
+	{
+		if (state == State.WAITING_FOR_RESPAWN || start > end || interval <= 0)
+		{
+			return false;
+		}
+
+		long newStart = start;
+		long newEnd = end;
+		// A local window spanning a whole cycle says nothing about the phase.
+		if (windowStartTick >= 0 && windowEndTick - windowStartTick < interval)
+		{
+			long[] narrowed = periodicIntersection(start, end, interval);
+			// Incompatible, ambiguous or no narrower: keep the first-hand phase.
+			if (narrowed == null || narrowed[1] - narrowed[0] >= windowEndTick - windowStartTick)
+			{
+				return false;
+			}
+			newStart = narrowed[0];
+			newEnd = narrowed[1];
+		}
+
+		windowStartTick = newStart;
+		windowEndTick = newEnd;
+		state = State.TRACKING;
+		// The carried chain is superseded by the merged phase.
+		clearDeathChain();
+		phaseFromParty = true;
+		return true;
+	}
+
+	boolean isPhaseFromParty()
+	{
+		return phaseFromParty;
+	}
+
+	/** @return the next regen window as absolute {start, end} ticks, or null */
+	long[] getUpcomingWindowTicks(long now, int intervalTicks)
+	{
+		if (windowStartTick < 0 || intervalTicks <= 0)
+		{
+			return null;
+		}
+
+		long start = windowStartTick;
+		long end = windowEndTick;
+		if (end < now)
+		{
+			long cycles = (now - end + intervalTicks - 1L) / intervalTicks;
+			start += cycles * intervalTicks;
+			end += cycles * intervalTicks;
+		}
+		return new long[]{start, end};
 	}
 
 	private void calibrateDeathPause(long start, long end, int interval)
@@ -485,21 +568,9 @@ final class RegenTimer
 
 	Window getUpcomingWindow(long now, int intervalTicks)
 	{
-		if (windowStartTick < 0 || intervalTicks <= 0)
-		{
-			return null;
-		}
-
-		long start = windowStartTick;
-		long end = windowEndTick;
-		if (end < now)
-		{
-			long cycles = (now - end + intervalTicks - 1L) / intervalTicks;
-			start += cycles * intervalTicks;
-			end += cycles * intervalTicks;
-		}
-
-		return new Window(Math.max(0, start - now), Math.max(0, end - now));
+		long[] window = getUpcomingWindowTicks(now, intervalTicks);
+		return window == null ? null
+			: new Window(Math.max(0, window[0] - now), Math.max(0, window[1] - now));
 	}
 
 	long getRespawnTicksRemaining(long now)
@@ -545,6 +616,14 @@ final class RegenTimer
 			start = narrowed[0];
 			end = narrowed[1];
 		}
+		else if (phaseFromParty && observedRegens == 0)
+		{
+			// First own heal on a shared phase: keep the shared precision.
+			long[] narrowed = narrowWithCarriedPhase(start, end, preferredInterval);
+			start = narrowed[0];
+			end = narrowed[1];
+		}
+		phaseFromParty = false;
 
 		if (observedRegens > 0 && start <= windowEndTick && end >= windowStartTick)
 		{

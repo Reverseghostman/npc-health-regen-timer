@@ -24,6 +24,9 @@ import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.Keybind;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.game.NPCManager;
+import net.runelite.client.party.PartyMember;
+import net.runelite.client.party.PartyService;
+import net.runelite.client.party.WSClient;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
@@ -37,6 +40,7 @@ public class NpcHealthRegenPluginBehaviorTest
 	private NpcHealthRegenConfig config;
 	private NpcTimingProfileStore profiles;
 	private ClientThread clientThread;
+	private PartyService partyService;
 	private NPC target;
 
 	@Before
@@ -56,8 +60,124 @@ public class NpcHealthRegenPluginBehaviorTest
 		set("profileStore", profiles);
 		set("clientThread", clientThread);
 		set("npcManager", mock(NPCManager.class));
+		partyService = mock(PartyService.class);
+		set("partyService", partyService);
+		set("wsClient", mock(WSClient.class));
 		target = npc(1, 42);
 		select(target);
+	}
+
+	@Test
+	public void sharesTheWindowWithThePartyOnlyWhenItChanges() throws Exception
+	{
+		joinParty(301);
+		when(config.shareWithParty()).thenReturn(true);
+		plugin.getTimer().markNow(50, 100);
+		set("tick", 60L);
+
+		plugin.onGameTick(new GameTick());
+
+		ArgumentCaptor<NpcHealthRegenPartyUpdate> sent = ArgumentCaptor.forClass(NpcHealthRegenPartyUpdate.class);
+		verify(partyService).send(sent.capture());
+		NpcHealthRegenPartyUpdate update = sent.getValue();
+		assertEquals(301, update.getWorld());
+		assertEquals(1, update.getNpcId());
+		assertEquals(42, update.getNpcIndex());
+		assertEquals(100, update.getRegenTicks());
+		// Next heal at 150, sent from tick 61.
+		assertEquals(89, update.getWindowStartOffset());
+		assertEquals(89, update.getWindowEndOffset());
+
+		plugin.onGameTick(new GameTick());
+		verify(partyService, times(1)).send(any());
+
+		plugin.onUserJoin(null);
+		plugin.onGameTick(new GameTick());
+		verify(partyService, times(2)).send(any());
+	}
+
+	@Test
+	public void doesNotShareWhenSharingIsOff() throws Exception
+	{
+		joinParty(301);
+		plugin.getTimer().markNow(50, 100);
+
+		plugin.onGameTick(new GameTick());
+
+		verify(partyService, never()).send(any());
+	}
+
+	@Test
+	public void partyMembersWindowFillsInTheSameNpc() throws Exception
+	{
+		joinParty(301);
+		when(config.useSharedTimers()).thenReturn(true);
+		set("tick", 100L);
+
+		plugin.applyPartyUpdate(partyUpdate(2L, 301, 42, 30, 32));
+
+		// Widened by a tick either side for delivery timing.
+		RegenTimer.Window window = plugin.getTimer().getUpcomingWindow(100, 100);
+		assertEquals(29, window.getEarliestTicks());
+		assertEquals(33, window.getLatestTicks());
+		assertEquals("Alice", plugin.getPartySourceName());
+
+		// The first own observation takes over from the shared phase.
+		plugin.getTimer().markNow(130, 100);
+		assertNull(plugin.getPartySourceName());
+	}
+
+	@Test
+	public void ignoresOwnOtherNpcAndOtherWorldUpdates() throws Exception
+	{
+		joinParty(301);
+		when(config.useSharedTimers()).thenReturn(true);
+
+		plugin.applyPartyUpdate(partyUpdate(1L, 301, 42, 30, 32));
+		plugin.applyPartyUpdate(partyUpdate(2L, 301, 43, 30, 32));
+		plugin.applyPartyUpdate(partyUpdate(2L, 302, 42, 30, 32));
+
+		assertNull(plugin.getTimer().getUpcomingWindow(0, 100));
+	}
+
+	@Test
+	public void ignoresPartyTimersWhenTurnedOff() throws Exception
+	{
+		joinParty(301);
+
+		plugin.applyPartyUpdate(partyUpdate(2L, 301, 42, 30, 32));
+
+		assertNull(plugin.getTimer().getUpcomingWindow(0, 100));
+	}
+
+	@Test
+	public void partyUpdatesAreHandledOnTheClientThread()
+	{
+		plugin.onNpcHealthRegenPartyUpdate(partyUpdate(2L, 301, 42, 30, 32));
+
+		verify(clientThread).invokeLater(any(Runnable.class));
+	}
+
+	private Client joinParty(int world) throws Exception
+	{
+		Client client = mock(Client.class);
+		when(client.getWorld()).thenReturn(world);
+		set("client", client);
+		when(partyService.isInParty()).thenReturn(true);
+		when(partyService.getLocalMember()).thenReturn(new PartyMember(1L));
+		PartyMember alice = new PartyMember(2L);
+		alice.setDisplayName("Alice");
+		when(partyService.getMemberById(2L)).thenReturn(alice);
+		return client;
+	}
+
+	private static NpcHealthRegenPartyUpdate partyUpdate(long memberId, int world, int npcIndex,
+		int startOffset, int endOffset)
+	{
+		NpcHealthRegenPartyUpdate update = new NpcHealthRegenPartyUpdate(
+			world, 1, npcIndex, 100, true, startOffset, endOffset);
+		update.setMemberId(memberId);
+		return update;
 	}
 
 	@Test
