@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.6
 
 - Share regen timers with RuneLite party members tracking the same NPC on the
   same world. A shared window fills in an uncalibrated timer or narrows a
