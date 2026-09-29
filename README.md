@@ -191,3 +191,13 @@ Everything else is in collapsible sections underneath, closed by default:
   the timer you are using
 - **Timing (advanced)**: learning, fallback regen and respawn times, and the
   splash weapon delay
+
+## Development
+
+The plugin targets Java 11 and RuneLite's latest release.
+
+- `./gradlew test` runs the unit and wiring tests, on Java 11 or any newer JDK.
+- `./gradlew run` starts a RuneLite developer client with the plugin loaded.
+
+See `CHANGELOG.md` for what changed in each release and `COMPLIANCE.md` for how
+the plugin fits the Jagex guidelines and Plugin Hub rules.

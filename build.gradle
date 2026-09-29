@@ -29,11 +29,17 @@ dependencies {
 }
 
 group = 'com.npchealthregen'
-version = '0.9.8'
+version = '0.9.9'
 
 tasks.withType(JavaCompile).configureEach {
 	options.encoding = 'UTF-8'
 	options.release.set(11)
+}
+
+tasks.withType(Test).configureEach {
+	// Mockito 4.11's Byte Buddy rejects class files newer than Java 20, so the tests that mock
+	// RuneLite types cannot start on a newer JDK without this. Harmless on Java 11.
+	jvmArgs '-Dnet.bytebuddy.experimental=true'
 }
 
 tasks.register('run', JavaExec) {

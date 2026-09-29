@@ -29,6 +29,18 @@ public class MonsterInspectionReaderTest
 	}
 
 	@Test
+	public void readsStatsSeparatedByNonBreakingSpaces()
+	{
+		// The game can use a non-breaking space, which regex \s does not match.
+		MonsterInspectionReader.Snapshot snapshot = MonsterInspectionReader.parse(
+			"Goblin",
+			Arrays.asList("Goblin", "Hitpoints:\u00a0197<br>Defence:&nbsp;48"));
+
+		assertEquals(197, snapshot.getHitpoints());
+		assertEquals(48, snapshot.getDefence());
+	}
+
+	@Test
 	public void ignoresInspectionForAnotherNpc()
 	{
 		MonsterInspectionReader.Snapshot snapshot = MonsterInspectionReader.parse(
