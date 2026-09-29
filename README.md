@@ -58,6 +58,39 @@ regen rate and phase, restores **Default regen interval**, and preserves its
 respawn measurement. Continue inspecting periodically to refine the countdown;
 a stale panel cannot establish an exact heal tick.
 
+## Venom ring and poison dynamite
+
+For envenoming an NPC on one account and landing poison dynamite on another
+before the venom first damages it:
+
+1. Wear a serpentine helm with a venom weapon (such as a Trident of the swamp)
+   on the venom account. A successful hit on the selected NPC, such as a Snare
+   just before its regen, starts a ring over the NPC.
+2. The ring counts down to the venom's first damage. Below it:
+   - **Wait Nt**: regen has not yet restored the hit's damage
+   - **Send Nt**: send the dynamite now; N ticks are left to send it
+   - **Too late** / **No window**: it would land after the venom
+   - **Venom!** or **No venom** once the result is seen
+3. Put both accounts in the same RuneLite party with the NPC selected on each,
+   and the dynamite account shows the same ring.
+
+The send window allows for the dynamite's travel time, measured the first time
+you use Dynamite(p) on the selected NPC (or set **Dynamite delay**). The first
+venom damage normally lands 30 ticks after the venom hit. The NPC's poison
+timer does not restart on each envenoming, so after a kill that was not a
+poison or venom hit, the ring counts only the part of the timer that remains.
+The first-hit delay is re-learned from each proc. Logging the venom account out
+cancels its ring on the party.
+
+## Logging out and losing sight of the NPC
+
+The selected NPC and its timer are kept when you log out and back in on the
+same world, and when the NPC walks out of view. The timer carries on by the
+time that passed, widened by a tick (plus one per five minutes away), and the
+NPC is picked up again when it reappears. Logging into another world, or
+moving more than 50 tiles from it while it is out of view, drops it. Deaths and
+respawns that happen out of sight cannot be seen.
+
 ## Sharing timers with a party
 
 Join the same RuneLite party (the core **Party** plugin) as your friends. When
@@ -91,6 +124,7 @@ Everything else is in collapsible sections underneath, closed by default:
   rates, inspected Hitpoints and Defence, current and maximum HP, time until
   full HP, Defence at full HP, observation source, tick counter) and when the
   countdown turns orange
+- **Venom & dynamite**: the venom ring and the dynamite delay
 - **Hotkeys**: **Mark regeneration now** and **Reset timer**
 - **Party**: share your timer, use party members' timers, and show who shared
   the timer you are using

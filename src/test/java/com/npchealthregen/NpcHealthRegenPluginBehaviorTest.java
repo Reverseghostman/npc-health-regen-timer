@@ -5,15 +5,26 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.function.Consumer;
 import net.runelite.api.Client;
+import net.runelite.api.EquipmentInventorySlot;
+import net.runelite.api.GameState;
+import net.runelite.api.Hitsplat;
+import net.runelite.api.HitsplatID;
+import net.runelite.api.Item;
+import net.runelite.api.ItemContainer;
 import net.runelite.api.KeyCode;
 import net.runelite.api.Menu;
 import net.runelite.api.MenuAction;
 import net.runelite.api.MenuEntry;
 import net.runelite.api.NPC;
+import net.runelite.api.Player;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ActorDeath;
+import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ClientTick;
+import net.runelite.api.events.HitsplatApplied;
+import net.runelite.api.gameval.InventoryID;
+import net.runelite.api.gameval.ItemID;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.NpcDespawned;
@@ -156,6 +167,194 @@ public class NpcHealthRegenPluginBehaviorTest
 		plugin.onNpcHealthRegenPartyUpdate(partyUpdate(2L, 301, 42, 30, 32));
 
 		verify(clientThread).invokeLater(any(Runnable.class));
+	}
+
+	@Test
+	public void venomHitWithSerpentineHelmAndTridentStartsTheRingAndSharesIt() throws Exception
+	{
+		Client client = joinParty(301);
+		when(config.showVenomRing()).thenReturn(true);
+		when(config.shareWithParty()).thenReturn(true);
+		wearVenomSetup(client);
+		select(target);
+		plugin.getTimer().markNow(90, 100);
+		set("tick", 185L);
+
+		// Snare for 1 just before the regen at 190.
+		hit(target, HitsplatID.DAMAGE_ME, 1, true);
+
+		VenomRing ring = plugin.getVenomRing();
+		assertEquals(VenomRing.Status.COUNTING, ring.getStatus());
+		assertEquals(215, ring.getProcLatest());
+		assertEquals(190, ring.getFullHpTick());
+		ArgumentCaptor<NpcHealthRegenVenomUpdate> sent = ArgumentCaptor.forClass(NpcHealthRegenVenomUpdate.class);
+		verify(partyService).send(sent.capture());
+		assertEquals(30, sent.getValue().getProcLatestOffset());
+		assertEquals(5, sent.getValue().getFullHpOffset());
+
+		hit(target, HitsplatID.VENOM, 6, false);
+		assertEquals(VenomRing.Status.PROCCED, ring.getStatus());
+	}
+
+	@Test
+	public void hitWithoutTheVenomSetupStartsNoRing() throws Exception
+	{
+		Client client = mock(Client.class);
+		set("client", client);
+		when(config.showVenomRing()).thenReturn(true);
+
+		hit(target, HitsplatID.DAMAGE_ME, 1, true);
+
+		assertEquals(VenomRing.Status.NONE, plugin.getVenomRing().getStatus());
+	}
+
+	@Test
+	public void dynamiteDelayIsMeasuredFromUseToHit() throws Exception
+	{
+		Client client = mock(Client.class);
+		set("client", client);
+		Widget dynamite = mock(Widget.class);
+		when(dynamite.getItemId()).thenReturn(ItemID.LOVAKENGJ_DYNAMITE_POISON);
+		when(client.getSelectedWidget()).thenReturn(dynamite);
+		MenuOptionClicked use = mock(MenuOptionClicked.class);
+		MenuEntry entry = mock(MenuEntry.class);
+		when(entry.getNpc()).thenReturn(target);
+		when(use.getMenuEntry()).thenReturn(entry);
+		when(use.getMenuAction()).thenReturn(MenuAction.WIDGET_TARGET_ON_NPC);
+		set("tick", 100L);
+		plugin.onMenuOptionClicked(use);
+
+		set("tick", 104L);
+		hit(target, HitsplatID.DAMAGE_ME, 3, true);
+
+		assertEquals(4, plugin.getDynamiteDelayTicks());
+		assertFalse(plugin.isInspectionPending());
+	}
+
+	@Test
+	public void partyVenomHitShowsTheRingOnTheDynamiteAccount() throws Exception
+	{
+		joinParty(301);
+		select(target);
+		when(config.useSharedTimers()).thenReturn(true);
+		when(config.showVenomRing()).thenReturn(true);
+		set("tick", 100L);
+
+		plugin.applyVenomUpdate(venomUpdate(false));
+
+		VenomRing ring = plugin.getVenomRing();
+		assertTrue(ring.isShared());
+		assertEquals(129, ring.getProcEarliest());
+		assertEquals(131, ring.getProcLatest());
+		assertEquals(106, ring.getFullHpTick());
+
+		// The venom account logged out before the venom procced.
+		plugin.applyVenomUpdate(venomUpdate(true));
+		assertEquals(VenomRing.Status.NONE, ring.getStatus());
+	}
+
+	@Test
+	public void loggingOutKeepsTheNpcAndCarriesTheTimerOn() throws Exception
+	{
+		Client client = mock(Client.class);
+		when(client.getWorld()).thenReturn(301);
+		set("client", client);
+		select(target);
+		plugin.getTimer().markNow(50, 100);
+		set("tick", 100L);
+
+		plugin.onGameStateChanged(gameState(GameState.LOGIN_SCREEN));
+		assertNull(plugin.getTarget());
+		assertEquals("Goblin", plugin.getTargetName());
+
+		// Back a minute (100 ticks) later.
+		set("awayMillis", System.currentTimeMillis() - 60_000L);
+		plugin.onGameStateChanged(gameState(GameState.LOGGED_IN));
+		assertEquals(200, plugin.getTick());
+		// The heal at 50 recurs at 250, widened a tick each side for the gap.
+		RegenTimer.Window window = plugin.getTimer().getUpcomingWindow(200, 100);
+		assertEquals(49, window.getEarliestTicks());
+		assertEquals(51, window.getLatestTicks());
+
+		NPC again = npc(1, 42);
+		plugin.onNpcSpawned(new NpcSpawned(again));
+		assertSame(again, plugin.getTarget());
+	}
+
+	@Test
+	public void loggingIntoAnotherWorldDropsTheNpc() throws Exception
+	{
+		Client client = mock(Client.class);
+		when(client.getWorld()).thenReturn(301);
+		set("client", client);
+		select(target);
+		plugin.onGameStateChanged(gameState(GameState.LOGIN_SCREEN));
+
+		when(client.getWorld()).thenReturn(302);
+		plugin.onGameStateChanged(gameState(GameState.LOGGED_IN));
+
+		assertNull(plugin.getTargetName());
+	}
+
+	@Test
+	public void npcOutOfViewKeepsItsTimerUntilYouWalkAway() throws Exception
+	{
+		Client client = mock(Client.class);
+		set("client", client);
+		plugin.getTimer().markNow(50, 100);
+		when(target.getHealthRatio()).thenReturn(-1);
+
+		plugin.onNpcDespawned(new NpcDespawned(target));
+
+		assertTrue(plugin.isTargetOutOfView());
+		assertNotNull(plugin.getTimer().getUpcomingWindow(60, 100));
+
+		Player player = mock(Player.class);
+		when(client.getLocalPlayer()).thenReturn(player);
+		when(player.getWorldLocation()).thenReturn(new WorldPoint(3210, 3200, 0));
+		plugin.onGameTick(new GameTick());
+		assertEquals("Goblin", plugin.getTargetName());
+
+		when(player.getWorldLocation()).thenReturn(new WorldPoint(3300, 3200, 0));
+		plugin.onGameTick(new GameTick());
+		assertNull(plugin.getTargetName());
+	}
+
+	private static NpcHealthRegenVenomUpdate venomUpdate(boolean cancelled)
+	{
+		NpcHealthRegenVenomUpdate update = new NpcHealthRegenVenomUpdate(
+			301, 1, 42, cancelled, 0, 30, 30, true, 5);
+		update.setMemberId(2L);
+		return update;
+	}
+
+	private static void wearVenomSetup(Client client)
+	{
+		ItemContainer worn = mock(ItemContainer.class);
+		when(worn.getItem(EquipmentInventorySlot.HEAD.getSlotIdx()))
+			.thenReturn(new Item(ItemID.SERPENTINE_HELM_CHARGED, 1));
+		when(worn.getItem(EquipmentInventorySlot.WEAPON.getSlotIdx()))
+			.thenReturn(new Item(ItemID.TOXIC_TOTS_CHARGED, 1));
+		when(client.getItemContainer(InventoryID.WORN)).thenReturn(worn);
+	}
+
+	private void hit(NPC npc, int type, int amount, boolean mine)
+	{
+		Hitsplat hitsplat = mock(Hitsplat.class);
+		when(hitsplat.getHitsplatType()).thenReturn(type);
+		when(hitsplat.getAmount()).thenReturn(amount);
+		when(hitsplat.isMine()).thenReturn(mine);
+		HitsplatApplied event = new HitsplatApplied();
+		event.setActor(npc);
+		event.setHitsplat(hitsplat);
+		plugin.onHitsplatApplied(event);
+	}
+
+	private static GameStateChanged gameState(GameState state)
+	{
+		GameStateChanged event = new GameStateChanged();
+		event.setGameState(state);
+		return event;
 	}
 
 	private Client joinParty(int world) throws Exception

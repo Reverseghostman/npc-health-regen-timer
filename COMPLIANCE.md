@@ -44,14 +44,16 @@ The source code:
   executable downloads or dynamically loaded external code;
 - makes no network requests of its own and contains no third-party data client.
   When the player has joined a RuneLite party, it sends the selected NPC's
-  world, NPC ID, NPC index and regen window (as tick offsets) through
-  RuneLite's own party service, and uses the same data from party members
-  tracking the same NPC. Both directions can be turned off in the Party
+  world, NPC ID, NPC index, regen window and venom-ring timing (as tick
+  offsets) through RuneLite's own party service, and uses the same data from
+  party members tracking the same NPC. Both directions can be turned off in the Party
   settings. Party membership and member names are handled by RuneLite;
 - does not transmit account names, player names, combat results or saved
   learned timings;
 - does not click, cast, attack, move the mouse, inject keyboard input or automate
-  any game action;
+  any game action. The venom ring only displays a countdown after the player's
+  own manual hit and dynamite use; it reads the worn equipment to tell whether
+  that hit envenoms;
 - adds `MenuAction.RUNELITE` entries for manual selection, clearing and
   recalibration, which run only in the client and do not send actions to the
   game server;

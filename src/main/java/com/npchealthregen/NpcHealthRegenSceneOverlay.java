@@ -17,10 +17,14 @@ import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.client.ui.overlay.OverlayUtil;
+import net.runelite.client.ui.overlay.components.ProgressPieComponent;
 
 final class NpcHealthRegenSceneOverlay extends Overlay
 {
 	private static final Color WARNING = new Color(255, 170, 0);
+	private static final Color VENOM_GREEN = new Color(60, 200, 90);
+	private static final Color LATE_RED = new Color(230, 60, 60);
+	private static final int RING_DIAMETER = 24;
 	private static final Color RESPAWN_FILL = new Color(255, 170, 0, 35);
 	private static final Color TEXT = Color.WHITE;
 
@@ -68,6 +72,8 @@ final class NpcHealthRegenSceneOverlay extends Overlay
 			renderShape(graphics, highlight, border, fill);
 		}
 
+		renderVenomRing(graphics, target);
+
 		if (!config.showOverheadRegenCountdown())
 		{
 			return;
@@ -89,6 +95,81 @@ final class NpcHealthRegenSceneOverlay extends Overlay
 				? WARNING : TEXT;
 			OverlayUtil.renderTextLocation(graphics, location, text, colour);
 		}
+	}
+
+	private void renderVenomRing(Graphics2D graphics, NPC target)
+	{
+		VenomRing ring = plugin.getVenomRing();
+		if (!config.showVenomRing() || ring.getStatus() == VenomRing.Status.NONE)
+		{
+			return;
+		}
+
+		// Above the overhead regen countdown.
+		Point centre = target.getCanvasTextLocation(graphics, "", target.getLogicalHeight() + 110);
+		if (centre == null)
+		{
+			return;
+		}
+
+		RingState state = ringState(ring, plugin.getTick(), plugin.getDynamiteDelayTicks());
+		ProgressPieComponent pie = new ProgressPieComponent();
+		pie.setPosition(centre);
+		pie.setDiameter(RING_DIAMETER);
+		pie.setProgress(state.progress);
+		pie.setBorderColor(state.colour);
+		pie.setFill(new Color(state.colour.getRed(), state.colour.getGreen(), state.colour.getBlue(), 110));
+		pie.render(graphics);
+
+		int textWidth = graphics.getFontMetrics().stringWidth(state.label);
+		int textHeight = graphics.getFontMetrics().getAscent();
+		OverlayUtil.renderTextLocation(graphics,
+			new Point(centre.getX() - textWidth / 2, centre.getY() + RING_DIAMETER / 2 + textHeight + 2),
+			state.label, state.colour);
+	}
+
+	static final class RingState
+	{
+		final double progress;
+		final Color colour;
+		final String label;
+
+		RingState(double progress, Color colour, String label)
+		{
+			this.progress = progress;
+			this.colour = colour;
+			this.label = label;
+		}
+	}
+
+	/** What the venom ring shows: wait, send the dynamite, too late, or the result. */
+	static RingState ringState(VenomRing ring, long now, int dynamiteDelayTicks)
+	{
+		switch (ring.getStatus())
+		{
+			case PROCCED:
+				return new RingState(1, VENOM_GREEN, "Venom!");
+			case NO_VENOM:
+				return new RingState(1, LATE_RED, "No venom");
+			default:
+				break;
+		}
+
+		double progress = ring.getProgress(now);
+		long[] window = ring.getDynamiteWindow(dynamiteDelayTicks);
+		if (window == null || window[1] < window[0])
+		{
+			return new RingState(progress, LATE_RED, "No window");
+		}
+		if (now < window[0])
+		{
+			return new RingState(progress, WARNING, "Wait " + (window[0] - now) + "t");
+		}
+		if (now <= window[1])
+		{
+			return new RingState(progress, VENOM_GREEN, "Send " + (window[1] - now) + "t");
+		}
+		return new RingState(progress, LATE_RED, "Too late");
 	}
 
 	private Shape highlightShape(NPC target, NpcHealthRegenConfig.NpcHighlight style)

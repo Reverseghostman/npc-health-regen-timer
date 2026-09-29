@@ -46,6 +46,11 @@ final class NpcHealthRegenOverlay extends OverlayPanel
 		{
 			addLine("Target", plugin.getTargetName(), Color.WHITE);
 		}
+		if (plugin.isTargetOutOfView())
+		{
+			addLine("Target", "Out of view (timer kept)", WARNING);
+		}
+		addVenomLines();
 		String partySource = plugin.getPartySourceName();
 		if (config.showPartySource() && partySource != null)
 		{
@@ -154,6 +159,36 @@ final class NpcHealthRegenOverlay extends OverlayPanel
 		}
 
 		return super.render(graphics);
+	}
+
+	private void addVenomLines()
+	{
+		VenomRing ring = plugin.getVenomRing();
+		if (!config.showVenomRing() || ring.getStatus() == VenomRing.Status.NONE)
+		{
+			return;
+		}
+
+		long now = plugin.getTick();
+		switch (ring.getStatus())
+		{
+			case PROCCED:
+				addLine("Venom", "Procced after " + ring.getLastObservedDelay() + "t", LEARNED);
+				return;
+			case NO_VENOM:
+				addLine("Venom", "No venom", WINDOW_NOW);
+				return;
+			default:
+				break;
+		}
+
+		long earliest = Math.max(0, ring.getProcEarliest() - now);
+		long latest = Math.max(0, ring.getProcLatest() - now);
+		addLine("Venom procs in", earliest == latest ? formatTicks(earliest) : formatWindow(earliest, latest),
+			Color.WHITE);
+		NpcHealthRegenSceneOverlay.RingState state = NpcHealthRegenSceneOverlay.ringState(
+			ring, now, plugin.getDynamiteDelayTicks());
+		addLine("Dynamite", state.label, state.colour);
 	}
 
 	private void addRespawnCountdown(RegenTimer timer)
