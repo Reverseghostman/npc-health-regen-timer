@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.9.7
+
+- Show your venom chance in the info panel (new **Venom chance** setting, on by
+  default) from the venom weapon and charged serpentine helm you wear, using the
+  OSRS Wiki figures for an NPC: toxic blowpipe, trident of the swamp and toxic
+  staff of the dead are 100% with the helm and 25% without; the noxious halberd
+  is 33%, or 50% with the helm. Green at 100%, orange below it.
+- Fix the venom ring starting on a miss or splash. A hit that lands always shows
+  at least 1, so a hitsplat of 0 is a miss and cannot envenom; it now starts no
+  ring and sends nothing to the party.
+- Fix the noxious halberd being treated as a guaranteed venom with the helm. It
+  is 50% there, so it starts no ring.
+- Keep the overhead countdown and venom ring clear of other plugins that draw
+  above an NPC's head: Poison Dynamite and Poisoned NPCs draw at the same height,
+  and Venom Timer's lines run down through it. New **Overlay placement** section:
+  **Automatic** (default) moves them beside the NPC while any of those plugins is
+  enabled and otherwise keeps them centred above it; or choose **Above head**,
+  **Beside NPC (right)** or **Beside NPC (left)** and the **Side distance**.
+- Stack the venom label and ring above the countdown in pixels. At some zoom
+  levels the old fixed heights put the label on top of the countdown.
+- The info panel no longer takes first place in its corner, so other plugins'
+  panels keep their order.
+- Discard the measured dynamite delay when another NPC is selected or the
+  **Dynamite delay** setting is changed. It is measured each time Dynamite(p)
+  lands; the setting and README said "the first time", and a measurement made on
+  one NPC used to carry over to the next and override the setting.
+
 ## 0.9.6
 
 - Share regen timers with RuneLite party members tracking the same NPC on the

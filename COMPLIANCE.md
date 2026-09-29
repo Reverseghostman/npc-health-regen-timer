@@ -52,8 +52,14 @@ The source code:
   learned timings;
 - does not click, cast, attack, move the mouse, inject keyboard input or automate
   any game action. The venom ring only displays a countdown after the player's
-  own manual hit and dynamite use; it reads the worn equipment to tell whether
-  that hit envenoms;
+  own manual hit and dynamite use; it reads the worn weapon and helm to tell
+  whether that hit envenoms and to show the player's venom chance, which is
+  fixed data from the OSRS Wiki and needs no network request;
+- in Automatic overlay placement, reads the display names and enabled state of
+  the other installed plugins through RuneLite's `PluginManager`, only to keep
+  its overhead text clear of Poison Dynamite, Poisoned NPCs and Venom Timer. It
+  reads no other data from them, changes nothing in them and does not consume
+  events they receive. The other placements do not look at other plugins;
 - adds `MenuAction.RUNELITE` entries for manual selection, clearing and
   recalibration, which run only in the client and do not send actions to the
   game server;
@@ -69,6 +75,18 @@ behaviours and is designed to comply when used for its stated ordinary-NPC
 purpose. This is not a guarantee of acceptance or of compliance in every future
 use: RuneLite states that Plugin Hub review is best-effort, rules can be
 subjective or change, and every initial submission and update is reviewed.
+
+## Changes since the review
+
+The review above is dated 22 September 2026. Party sharing, the venom ring, the
+venom chance row and overlay placement were added afterwards. The text above
+describes what they do, but they have not been checked against the guidelines
+again, so the date is left as it was.
+
+Open question for those features: the venom ring's Wait, Send and Too late labels
+tell the player when to send poison dynamite. That is a timing prompt, not only
+a passive display. Decide whether it is acceptable, and repeat the review, before
+any Plugin Hub submission or update.
 
 Before submitting, keep the description and feature set generic and non-boss.
 Do not extend the recorded spawn-location display into attack prediction,

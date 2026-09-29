@@ -48,6 +48,7 @@ import net.runelite.client.party.WSClient;
 import net.runelite.client.party.events.UserJoin;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.plugins.PluginManager;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.util.Text;
 
@@ -70,16 +71,19 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		ItemID.SERPENTINE_HELM_CHARGED,
 		ItemID.SERPENTINE_HELM_CHARGED_CYAN,
 		ItemID.SERPENTINE_HELM_CHARGED_RED);
-	private static final Set<Integer> VENOM_WEAPONS = Set.of(
-		ItemID.TOXIC_TOTS_CHARGED,
-		ItemID.TOXIC_TOTS_I_CHARGED,
-		ItemID.TOXIC_TOTS_CHARGED_ORN,
-		ItemID.TOXIC_TOTS_I_CHARGED_ORN,
-		ItemID.TOXIC_SOTD_CHARGED,
-		ItemID.TOXIC_SOTD_CHARGED_DEADMAN,
-		ItemID.TOXIC_BLOWPIPE_LOADED,
-		ItemID.TOXIC_BLOWPIPE_LOADED_ORNAMENT,
-		ItemID.NOXIOUS_HALBERD);
+	private static final Map<Integer, VenomChance.Weapon> VENOM_WEAPONS = Map.ofEntries(
+		Map.entry(ItemID.TOXIC_TOTS_CHARGED, VenomChance.Weapon.TRIDENT_OF_THE_SWAMP),
+		Map.entry(ItemID.TOXIC_TOTS_I_CHARGED, VenomChance.Weapon.TRIDENT_OF_THE_SWAMP),
+		Map.entry(ItemID.TOXIC_TOTS_CHARGED_ORN, VenomChance.Weapon.TRIDENT_OF_THE_SWAMP),
+		Map.entry(ItemID.TOXIC_TOTS_I_CHARGED_ORN, VenomChance.Weapon.TRIDENT_OF_THE_SWAMP),
+		Map.entry(ItemID.TOXIC_SOTD_CHARGED, VenomChance.Weapon.TOXIC_STAFF_OF_THE_DEAD),
+		Map.entry(ItemID.TOXIC_SOTD_CHARGED_DEADMAN, VenomChance.Weapon.TOXIC_STAFF_OF_THE_DEAD),
+		Map.entry(ItemID.TOXIC_BLOWPIPE_LOADED, VenomChance.Weapon.TOXIC_BLOWPIPE),
+		Map.entry(ItemID.TOXIC_BLOWPIPE_LOADED_ORNAMENT, VenomChance.Weapon.TOXIC_BLOWPIPE),
+		Map.entry(ItemID.NOXIOUS_HALBERD, VenomChance.Weapon.NOXIOUS_HALBERD));
+	// Plugins that draw above an NPC's head, where the overhead countdown would otherwise sit.
+	private static final Set<String> OVERHEAD_PLUGIN_NAMES = Set.of(
+		"Poison Dynamite", "Poisoned NPCs", "Venom Timer");
 
 	private enum ObservationSource
 	{
@@ -128,6 +132,9 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	@Inject
 	private WSClient wsClient;
 
+	@Inject
+	private PluginManager pluginManager;
+
 	private final RegenTimer timer = new RegenTimer();
 	private final Map<NPC, WorldPoint> observedSpawnPoints = new IdentityHashMap<>();
 	private NPC target;
@@ -168,6 +175,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	private final Map<Integer, Integer> freshVenomDelays = new HashMap<>();
 	private long dynamiteUseTick = -1;
 	private int measuredDynamiteDelay = -1;
+	private VenomChance.Setup venomSetup;
+	private boolean overheadCrowded;
 
 	@Override
 	protected void startUp()
@@ -195,6 +204,9 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	public void onGameTick(GameTick event)
 	{
 		tick++;
+		venomSetup = readVenomSetup();
+		overheadCrowded = config.overheadPlacement() == NpcHealthRegenConfig.OverheadPlacement.AUTO
+			&& isAnyOverheadPluginEnabled();
 		if (target != null)
 		{
 			if (maximumHitpoints <= 0)
@@ -558,22 +570,28 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			return;
 		}
 
-		// With a serpentine helm and a venom weapon every successful hit envenoms.
-		if (config.showVenomRing() && isVenomSetupEquipped()
+		// A hit that passes its accuracy roll always deals at least 1 damage, so a hitsplat of 0
+		// is a miss or a splash, and that cannot envenom.
+		if (hitsplat.getAmount() <= 0)
+		{
+			return;
+		}
+
+		// A charged serpentine helm with a toxic blowpipe, trident of the swamp or toxic staff of
+		// the dead envenoms every landed hit. Other setups only do so some of the time, which is
+		// not enough to time a dynamite by, so they start no ring.
+		VenomChance.Setup setup = readVenomSetup();
+		venomSetup = setup;
+		if (config.showVenomRing() && setup != null && setup.isGuaranteed()
 			&& venomRing.start(tick, fullHpTickAfterHit(hitsplat.getAmount())))
 		{
 			shareVenom(false);
 		}
 	}
 
-	/** @return the latest tick by which regen undoes a hit landing now, or -1 */
+	/** @return the latest tick by which regen undoes a hit of at least 1 landing now, or -1 */
 	private long fullHpTickAfterHit(int damage)
 	{
-		if (damage <= 0)
-		{
-			return tick;
-		}
-
 		long[] window = timer.getUpcomingWindowTicks(tick + 1, activeRegenTicks);
 		if (window == null)
 		{
@@ -585,17 +603,39 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		return latest + (long) (damage - 1) * activeRegenTicks;
 	}
 
-	private boolean isVenomSetupEquipped()
+	/** @return the worn venom weapon and whether a charged serpentine helm is worn, or null */
+	private VenomChance.Setup readVenomSetup()
 	{
-		ItemContainer worn = client.getItemContainer(InventoryID.WORN);
+		ItemContainer worn = client == null ? null : client.getItemContainer(InventoryID.WORN);
 		if (worn == null)
+		{
+			return null;
+		}
+		Item weapon = worn.getItem(EquipmentInventorySlot.WEAPON.getSlotIdx());
+		VenomChance.Weapon kind = weapon == null ? null : VENOM_WEAPONS.get(weapon.getId());
+		if (kind == null)
+		{
+			return null;
+		}
+		Item head = worn.getItem(EquipmentInventorySlot.HEAD.getSlotIdx());
+		return new VenomChance.Setup(kind, head != null && SERPENTINE_HELMS.contains(head.getId()));
+	}
+
+	/** @return whether a plugin that draws above NPCs' heads (see OVERHEAD_PLUGIN_NAMES) is enabled */
+	private boolean isAnyOverheadPluginEnabled()
+	{
+		if (pluginManager == null)
 		{
 			return false;
 		}
-		Item head = worn.getItem(EquipmentInventorySlot.HEAD.getSlotIdx());
-		Item weapon = worn.getItem(EquipmentInventorySlot.WEAPON.getSlotIdx());
-		return head != null && SERPENTINE_HELMS.contains(head.getId())
-			&& weapon != null && VENOM_WEAPONS.contains(weapon.getId());
+		for (Plugin plugin : pluginManager.getPlugins())
+		{
+			if (OVERHEAD_PLUGIN_NAMES.contains(plugin.getName()) && pluginManager.isPluginEnabled(plugin))
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private void processHealthSample(NPC npc)
@@ -799,6 +839,11 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		{
 			loadActiveProfile();
 		}
+		else if ("dynamiteDelayTicks".equals(event.getKey()))
+		{
+			// A delay set by hand replaces the one measured.
+			measuredDynamiteDelay = -1;
+		}
 	}
 
 	@Subscribe
@@ -901,6 +946,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		awayMillis = -1;
 		awayTicksDuringDeath = -1;
 		dynamiteUseTick = -1;
+		// How long dynamite takes to land depends on the distance to this NPC.
+		measuredDynamiteDelay = -1;
 		venomRing.reset();
 		venomRing.setFreshDelay(freshVenomDelays.getOrDefault(npc.getId(), VenomRing.TIMER_TICKS));
 		timer.reset();
@@ -1004,6 +1051,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		awayMillis = -1;
 		awayTicksDuringDeath = -1;
 		dynamiteUseTick = -1;
+		measuredDynamiteDelay = -1;
 		venomRing.reset();
 		activeRegenTicks = config == null ? 100 : config.regenTicks();
 		activeRespawnTicks = 0;
@@ -1018,6 +1066,34 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	VenomRing getVenomRing()
 	{
 		return venomRing;
+	}
+
+	/** @return the worn venom weapon and helm as of the last tick, or null if no venom weapon is worn */
+	VenomChance.Setup getVenomSetup()
+	{
+		return venomSetup;
+	}
+
+	/** @return where the overhead countdown and venom ring go, with Automatic resolved */
+	OverheadLayout.Placement getOverheadPlacement()
+	{
+		NpcHealthRegenConfig.OverheadPlacement choice = config.overheadPlacement();
+		if (choice == null)
+		{
+			choice = NpcHealthRegenConfig.OverheadPlacement.AUTO;
+		}
+		switch (choice)
+		{
+			case ABOVE:
+				return OverheadLayout.Placement.ABOVE;
+			case RIGHT:
+				return OverheadLayout.Placement.RIGHT;
+			case LEFT:
+				return OverheadLayout.Placement.LEFT;
+			default:
+				// Beside the NPC while another plugin is using the space above its head.
+				return overheadCrowded ? OverheadLayout.Placement.RIGHT : OverheadLayout.Placement.ABOVE;
+		}
 	}
 
 	/** @return ticks from using dynamite on the NPC to its hit, measured or configured */
