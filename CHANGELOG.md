@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.9.10
+
+- Compensate for party message delivery time in the shared venom countdown and
+  NPC dynamite overlay. Both clients need the updated plugin and synchronized
+  system clocks; older messages retain the existing one-tick uncertainty.
+- Ignore expired or malformed venom timers, updates while logged out or in a
+  different world, and late countdowns after poison damage was observed.
+- Refresh active locally observed venom every five ticks and when a party member
+  joins, so accounts that select the NPC late can catch up. Shared countdowns
+  are never relayed back to the party.
+- Only the member who supplied an active venom ring can refresh or cancel it.
+  Ignore older timestamped updates after a newer refresh or cancellation, and
+  clear a shared ring when the party changes.
+- Invalidate inspected HP and Defence-at-full estimates after damage, including
+  hits that arrive without a health bar. A static inspection panel cannot
+  restore those estimates; a fresh reading can.
+- Add delayed-delivery, late-selection, cancellation, stale-panel and two-client
+  regression tests alongside the existing injection and lifecycle checks.
+
 ## 0.9.9
 
 - Fix **Reset timer** / **Recalibrate Regen Timer** erasing an NPC type's saved

@@ -129,3 +129,16 @@ prayer guidance, safe/unsafe standing tiles or boss-mechanic timing. If
 RuneLite's reviewers consider health regeneration a boss mechanic for a
 particular encounter, that use should be excluded or the plugin adjusted as
 they request.
+
+## Version 0.9.10 data and behavior changes
+
+Venom messages now include their send time in milliseconds, solely to compensate
+for delivery delay and reject out-of-order updates. Active locally observed venom
+is refreshed at most once per five game ticks, plus on a party join. Recipients do
+not relay it. The existing party member ID identifies which member may refresh or
+cancel a received ring. No external network endpoint, player location, gear data,
+automated game action or new combat prompt is added.
+
+Damage also invalidates inspected current-HP and Defence-at-full estimates until a
+fresh inspection reading arrives. This changes the validity of displayed estimates,
+not the inspection spell or any game action.

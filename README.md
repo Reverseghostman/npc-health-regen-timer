@@ -48,7 +48,8 @@ Both overlays show an approximate window (for example **Regen: ~11-41t**) from
 the first observed increase onward. Fresh readings, including unchanged HP when
 known to be below maximum, refine the possible phases of the active regen cycle.
 The tracker combines cumulative HP changes with successive readings, including
-multiple heals between casts. Damage invalidates the HP comparison, and full HP
+multiple heals between casts. Damage invalidates the HP comparison and inspected current-HP estimates until
+a fresh reading is obtained; leaving the old panel open cannot restore them. Full HP
 does not count as evidence that regeneration stopped. This model assumes one HP
 per cycle and cannot identify other healing or damage that the client misses.
 
@@ -81,6 +82,14 @@ before the venom first damages it:
    - **Venom!** or **No venom** once the result is seen
 3. Put both accounts in the same RuneLite party with the NPC selected on each,
    and the dynamite account shows the same ring.
+
+Use the latest plugin on both accounts and keep their computer clocks synchronized.
+Shared venom messages include a send timestamp to account for delivery delays;
+the proc window still allows one tick on each side for client tick boundaries.
+The venom account refreshes its active countdown every five ticks and when a
+member joins, so selecting the NPC after the first hit catches up automatically.
+Only that account can refresh or cancel its shared ring. Shared rings clear when
+you change parties, and expired updates cannot restart them.
 
 ### Venom chance
 
