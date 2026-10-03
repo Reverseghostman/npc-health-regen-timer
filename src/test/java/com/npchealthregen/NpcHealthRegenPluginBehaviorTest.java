@@ -225,6 +225,7 @@ public class NpcHealthRegenPluginBehaviorTest
 		ArgumentCaptor<NpcHealthRegenVenomUpdate> sent = ArgumentCaptor.forClass(NpcHealthRegenVenomUpdate.class);
 		verify(partyService).send(sent.capture());
 		assertEquals(30, sent.getValue().getProcLatestOffset());
+		assertTrue(sent.getValue().getSentAtMillis() > 0);
 		assertEquals(5, sent.getValue().getFullHpOffset());
 
 		hit(target, HitsplatID.VENOM, 6, false);
@@ -286,6 +287,246 @@ public class NpcHealthRegenPluginBehaviorTest
 		// The venom account logged out before the venom procced.
 		plugin.applyVenomUpdate(venomUpdate(true));
 		assertEquals(VenomRing.Status.NONE, ring.getStatus());
+	}
+
+	@Test
+	public void delayedPartyVenomKeepsTheOriginalDeadlineAndOverlayWindow() throws Exception
+	{
+		joinParty(301);
+		select(target);
+		when(config.useSharedTimers()).thenReturn(true);
+		when(config.showVenomRing()).thenReturn(true);
+		// The receiver uses a different tick counter and receives the hit five ticks late.
+		set("tick", 705L);
+		NpcHealthRegenVenomUpdate update = new NpcHealthRegenVenomUpdate(
+			301, 1, 42, false, 0, 30, 30, true, 5, 10_000L);
+		update.setMemberId(2L);
+		plugin.applyVenomUpdate(update, 13_000L);
+
+		VenomRing ring = plugin.getVenomRing();
+		assertEquals(700, ring.getAppliedTick());
+		assertEquals(729, ring.getProcEarliest());
+		assertEquals(731, ring.getProcLatest());
+		assertEquals(706, ring.getFullHpTick());
+		assertArrayEquals(new long[]{701, 723}, ring.getDynamiteWindow(5));
+		// At tick 705 the overhead ring is already in its send window.
+		assertEquals("Send 18t", NpcHealthRegenSceneOverlay.ringState(ring, 705, 5).label);
+	}
+
+	@Test
+	public void expiredOrAlreadyProccedPartyVenomDoesNotRestartTheRing() throws Exception
+	{
+		joinParty(301);
+		select(target);
+		when(config.useSharedTimers()).thenReturn(true);
+		when(config.showVenomRing()).thenReturn(true);
+		set("tick", 140L);
+		NpcHealthRegenVenomUpdate update = new NpcHealthRegenVenomUpdate(
+			301, 1, 42, false, 0, 30, 30, true, 5, 10_000L);
+		update.setMemberId(2L);
+		plugin.applyVenomUpdate(update, 34_000L);
+		assertEquals(VenomRing.Status.NONE, plugin.getVenomRing().getStatus());
+
+		plugin.getVenomRing().startShared(110, 139, 141, 115);
+		hit(target, HitsplatID.VENOM, 6, false);
+		plugin.applyVenomUpdate(venomUpdate(false));
+		assertEquals(VenomRing.Status.PROCCED, plugin.getVenomRing().getStatus());
+	}
+
+	@Test
+	public void partyVenomIsIgnoredWhileLoggedOut() throws Exception
+	{
+		joinParty(301);
+		select(target);
+		when(config.useSharedTimers()).thenReturn(true);
+		when(config.showVenomRing()).thenReturn(true);
+		set("awayMillis", 10_000L);
+		plugin.applyVenomUpdate(venomUpdate(false));
+		assertEquals(VenomRing.Status.NONE, plugin.getVenomRing().getStatus());
+	}
+
+	@Test
+	public void unrelatedPartyMemberCannotCancelOrReplaceAnActiveVenomRing() throws Exception
+	{
+		joinParty(301);
+		select(target);
+		when(config.useSharedTimers()).thenReturn(true);
+		when(config.showVenomRing()).thenReturn(true);
+		set("tick", 100L);
+		plugin.applyVenomUpdate(venomUpdate(false));
+
+		NpcHealthRegenVenomUpdate unrelated = venomUpdate(true);
+		unrelated.setMemberId(3L);
+		plugin.applyVenomUpdate(unrelated);
+		assertEquals(VenomRing.Status.COUNTING, plugin.getVenomRing().getStatus());
+		unrelated = new NpcHealthRegenVenomUpdate(301, 1, 42, false, 0, 20, 20, false, 0);
+		unrelated.setMemberId(3L);
+		plugin.applyVenomUpdate(unrelated);
+		assertEquals(131, plugin.getVenomRing().getProcLatest());
+
+		plugin.applyVenomUpdate(venomUpdate(true));
+		assertEquals(VenomRing.Status.NONE, plugin.getVenomRing().getStatus());
+	}
+
+	@Test
+	public void latePartyVenomCannotStartOnAnNpcThatDied() throws Exception
+	{
+		joinParty(301);
+		select(target);
+		when(config.useSharedTimers()).thenReturn(true);
+		when(config.showVenomRing()).thenReturn(true);
+		kill();
+		plugin.applyVenomUpdate(venomUpdate(false));
+		assertEquals(VenomRing.Status.NONE, plugin.getVenomRing().getStatus());
+	}
+
+	@Test
+	public void activeLocalVenomIsResharedForLateSelectionsAndNewPartyMembers() throws Exception
+	{
+		Client client = joinParty(301);
+		when(config.showVenomRing()).thenReturn(true);
+		when(config.shareWithParty()).thenReturn(true);
+		wearVenomSetup(client);
+		select(target);
+		set("tick", 100L);
+		hit(target, HitsplatID.DAMAGE_ME, 1, true);
+		clearInvocations(partyService);
+		for (int i = 0; i < 5; i++)
+		{
+			plugin.onGameTick(new GameTick());
+		}
+		ArgumentCaptor<NpcHealthRegenVenomUpdate> sent = ArgumentCaptor.forClass(NpcHealthRegenVenomUpdate.class);
+		verify(partyService).send(sent.capture());
+		assertEquals(-5, sent.getValue().getAppliedOffset());
+		assertEquals(25, sent.getValue().getProcLatestOffset());
+		clearInvocations(partyService);
+		plugin.onUserJoin(null);
+		plugin.onGameTick(new GameTick());
+		verify(partyService).send(any(NpcHealthRegenVenomUpdate.class));
+		clearInvocations(partyService);
+		hit(target, HitsplatID.VENOM, 6, false);
+		for (int i = 0; i < 10; i++)
+		{
+			plugin.onGameTick(new GameTick());
+		}
+		verify(partyService, never()).send(any(NpcHealthRegenVenomUpdate.class));
+	}
+
+	@Test
+	public void damageInvalidatesTheInspectedHpEvenWithoutAHealthBar() throws Exception
+	{
+		set("client", mock(Client.class));
+		when(target.getHealthRatio()).thenReturn(-1);
+		set("lastInspectedHitpoints", 50);
+		set("lastInspectedTick", 0L);
+		set("maximumHitpoints", 50);
+		assertEquals(50, plugin.getCurrentHitpoints().getMinimum());
+		hit(target, HitsplatID.DAMAGE_ME, 1, true);
+		assertFalse(plugin.isCurrentHitpointsExact());
+		assertNull(plugin.getCurrentHitpoints());
+		assertNull(plugin.getTimeUntilFullHitpoints());
+	}
+
+	@Test
+	public void olderRefreshCannotResurrectACancelledPartyRing() throws Exception
+	{
+		joinParty(301);
+		select(target);
+		when(config.useSharedTimers()).thenReturn(true);
+		when(config.showVenomRing()).thenReturn(true);
+		set("tick", 100L);
+		NpcHealthRegenVenomUpdate start = new NpcHealthRegenVenomUpdate(
+			301, 1, 42, false, 0, 30, 30, true, 5, 10_000L);
+		start.setMemberId(2L);
+		plugin.applyVenomUpdate(start, 10_000L);
+		NpcHealthRegenVenomUpdate cancel = new NpcHealthRegenVenomUpdate(
+			301, 1, 42, true, -1, 29, 29, true, 4, 10_600L);
+		cancel.setMemberId(2L);
+		plugin.applyVenomUpdate(cancel, 10_600L);
+		plugin.applyVenomUpdate(start, 10_600L);
+		assertEquals(VenomRing.Status.NONE, plugin.getVenomRing().getStatus());
+	}
+
+	@Test
+	public void sharedCountdownIsNotEchoedBackToTheParty() throws Exception
+	{
+		joinParty(301);
+		select(target);
+		when(config.useSharedTimers()).thenReturn(true);
+		when(config.shareWithParty()).thenReturn(true);
+		when(config.showVenomRing()).thenReturn(true);
+		plugin.applyVenomUpdate(venomUpdate(false));
+		plugin.onUserJoin(null);
+		for (int i = 0; i < 10; i++)
+		{
+			plugin.onGameTick(new GameTick());
+		}
+		verify(partyService, never()).send(any(NpcHealthRegenVenomUpdate.class));
+	}
+
+	@Test
+	public void staleInspectionPanelCannotRestoreHpAfterDamage() throws Exception
+	{
+		Client client = mock(Client.class);
+		Widget root = mock(Widget.class);
+		set("client", client);
+		set("maximumHitpoints", 50);
+		when(target.getHealthRatio()).thenReturn(-1);
+		when(client.getWidgetRoots()).thenReturn(new Widget[0]);
+		castInspection(target);
+		when(root.getText()).thenReturn("Goblin<br>Hitpoints: 50<br>Defence: 3");
+		when(client.getWidgetRoots()).thenReturn(new Widget[]{root});
+		plugin.onGameTick(new GameTick());
+		assertEquals(50, plugin.getCurrentHitpoints().getMinimum());
+		hit(target, HitsplatID.DAMAGE_ME, 1, true);
+		plugin.onGameTick(new GameTick());
+		assertNull(plugin.getCurrentHitpoints());
+		assertNull(plugin.getDefenceAtFullHitpoints());
+
+		// A new cast after closing the panel establishes a fresh health baseline.
+		when(client.getWidgetRoots()).thenReturn(new Widget[0]);
+		castInspection(target);
+		when(root.getText()).thenReturn("Goblin<br>Hitpoints: 49<br>Defence: 3");
+		when(client.getWidgetRoots()).thenReturn(new Widget[]{root});
+		plugin.onGameTick(new GameTick());
+		assertEquals(49, plugin.getCurrentHitpoints().getMinimum());
+	}
+
+	@Test
+	public void impossiblePartyVenomWindowsAndFutureTimestampsAreIgnored() throws Exception
+	{
+		joinParty(301);
+		select(target);
+		when(config.useSharedTimers()).thenReturn(true);
+		when(config.showVenomRing()).thenReturn(true);
+		NpcHealthRegenVenomUpdate[] invalid = {
+			new NpcHealthRegenVenomUpdate(301, 1, 42, false, 1, 30, 30, false, 0, 10_000L),
+			new NpcHealthRegenVenomUpdate(301, 1, 42, false, 0, 31, 30, false, 0, 10_000L),
+			new NpcHealthRegenVenomUpdate(301, 1, 42, false, 0, 30, 34, false, 0, 10_000L),
+			new NpcHealthRegenVenomUpdate(301, 1, 42, false, 0, 30, 30, false, 0, -1L),
+			new NpcHealthRegenVenomUpdate(301, 1, 42, false, 0, 30, 30, false, 0, 20_000L)
+		};
+		for (NpcHealthRegenVenomUpdate update : invalid)
+		{
+			update.setMemberId(2L);
+			plugin.applyVenomUpdate(update, 10_000L);
+			assertEquals(VenomRing.Status.NONE, plugin.getVenomRing().getStatus());
+		}
+	}
+
+	@Test
+	public void futureCancellationDoesNotPoisonTheMembersUpdateOrdering() throws Exception
+	{
+		joinParty(301);
+		select(target);
+		when(config.useSharedTimers()).thenReturn(true);
+		when(config.showVenomRing()).thenReturn(true);
+		plugin.applyVenomUpdate(venomUpdate(false));
+		NpcHealthRegenVenomUpdate cancel = new NpcHealthRegenVenomUpdate(
+			301, 1, 42, true, 0, 30, 30, true, 5, Long.MAX_VALUE);
+		cancel.setMemberId(2L);
+		plugin.applyVenomUpdate(cancel, 10_000L);
+		assertEquals(VenomRing.Status.COUNTING, plugin.getVenomRing().getStatus());
 	}
 
 	@Test

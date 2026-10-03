@@ -6,6 +6,14 @@ import java.util.ArrayList;
 import java.util.List;
 import net.runelite.api.Client;
 import net.runelite.api.NPC;
+import net.runelite.api.Hitsplat;
+import net.runelite.api.HitsplatID;
+import net.runelite.api.Item;
+import net.runelite.api.ItemContainer;
+import net.runelite.api.EquipmentInventorySlot;
+import net.runelite.api.events.HitsplatApplied;
+import net.runelite.api.gameval.InventoryID;
+import net.runelite.api.gameval.ItemID;
 import net.runelite.api.Player;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ActorDeath;
@@ -63,6 +71,7 @@ public class PartyReturnTest
 			when(config.learnNpcTimings()).thenReturn(true);
 			when(config.shareWithParty()).thenReturn(true);
 			when(config.useSharedTimers()).thenReturn(true);
+			when(config.showVenomRing()).thenReturn(true);
 			NpcTimingProfileStore profiles = mock(NpcTimingProfileStore.class);
 			when(profiles.load(NPC_ID)).thenReturn(new NpcTimingProfileStore.Profile(0, 0));
 			PartyService party = mock(PartyService.class);
@@ -105,6 +114,24 @@ public class PartyReturnTest
 			when(npc.getHealthRatio()).thenReturn(-1);
 			when(npc.getHealthScale()).thenReturn(-1);
 			return npc;
+		}
+
+		void envenom()
+		{
+			ItemContainer worn = mock(ItemContainer.class);
+			when(worn.getItem(EquipmentInventorySlot.HEAD.getSlotIdx()))
+				.thenReturn(new Item(ItemID.SERPENTINE_HELM_CHARGED, 1));
+			when(worn.getItem(EquipmentInventorySlot.WEAPON.getSlotIdx()))
+				.thenReturn(new Item(ItemID.TOXIC_TOTS_CHARGED, 1));
+			when(client.getItemContainer(InventoryID.WORN)).thenReturn(worn);
+			Hitsplat hit = mock(Hitsplat.class);
+			when(hit.getHitsplatType()).thenReturn(HitsplatID.DAMAGE_ME);
+			when(hit.getAmount()).thenReturn(1);
+			when(hit.isMine()).thenReturn(true);
+			HitsplatApplied event = new HitsplatApplied();
+			event.setActor(npc);
+			event.setHitsplat(hit);
+			plugin.onHitsplatApplied(event);
 		}
 
 		void select() throws Exception
@@ -187,6 +214,19 @@ public class PartyReturnTest
 			{
 				for (Object message : from.outbox)
 				{
+					if (message instanceof NpcHealthRegenVenomUpdate)
+					{
+						NpcHealthRegenVenomUpdate update = (NpcHealthRegenVenomUpdate) message;
+						update.setMemberId(from.id);
+						for (Member to : members)
+						{
+							if (to != from)
+							{
+								// Virtual game ticks advance without wall-clock sleeps in this test.
+								to.plugin.applyVenomUpdate(update, update.getSentAtMillis());
+							}
+						}
+					}
 					if (message instanceof NpcHealthRegenPartyUpdate)
 					{
 						NpcHealthRegenPartyUpdate update = (NpcHealthRegenPartyUpdate) message;
@@ -225,6 +265,30 @@ public class PartyReturnTest
 		a.markHeal();
 		run(5);
 		assertAgree(a, b);
+	}
+
+	@Test
+	public void aLateSelectingAccountCatchesUpWithoutMovingTheVenomDeadline() throws Exception
+	{
+		Member source = join(1, 100);
+		Member receiver = join(2, 700);
+		source.select();
+		source.markHeal();
+		source.envenom();
+		run(3); // The receiver has not selected the NPC and misses the initial message.
+		receiver.select();
+		run(3); // The source's periodic refresh reaches the receiver.
+		VenomRing own = source.plugin.getVenomRing();
+		VenomRing shared = receiver.plugin.getVenomRing();
+		assertEquals(VenomRing.Status.COUNTING, shared.getStatus());
+		assertTrue(shared.isShared());
+		assertEquals(own.getAppliedTick() + 600, shared.getAppliedTick());
+		assertEquals(own.getProcEarliest() + 599, shared.getProcEarliest());
+		assertEquals(own.getProcLatest() + 601, shared.getProcLatest());
+		assertEquals(own.getFullHpTick() + 601, shared.getFullHpTick());
+		run(15); // More refreshes must not accumulate delivery uncertainty.
+		assertEquals(own.getProcEarliest() + 599, shared.getProcEarliest());
+		assertEquals(own.getProcLatest() + 601, shared.getProcLatest());
 	}
 
 	@Test

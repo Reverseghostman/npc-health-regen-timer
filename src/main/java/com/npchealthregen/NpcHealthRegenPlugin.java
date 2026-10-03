@@ -62,6 +62,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	// A party update can arrive in the sender's tick or the next, either side of
 	// this client's own tick boundary.
 	private static final int PARTY_LATENCY_TICKS = 1;
+	private static final int VENOM_SHARE_INTERVAL_TICKS = 5;
 	// The largest regen interval the settings allow, so no shared rate can be larger.
 	private static final int MAX_SHARED_REGEN_TICKS = 10000;
 	// Beyond this many tiles from its spawn, an out-of-view NPC is dropped.
@@ -163,6 +164,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	private boolean watchingInspection;
 	private MonsterInspectionReader.Snapshot inspectionBeforeCast;
 	private int lastInspectedHitpoints = -1;
+	private boolean inspectionHealthInvalidated;
 	private int lastInspectedDefence = -1;
 	private long lastInspectedTick = -1;
 	private int lastHealthRatio = -1;
@@ -181,6 +183,10 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	// First tick since the NPC died that the player was too far from its spawn to see it respawn.
 	private long respawnWatchLostTick = -1;
 	private final VenomRing venomRing = new VenomRing();
+	private long venomSourceMemberId = -1;
+	private long lastVenomMessageMillis;
+	private long lastVenomSharedTick = -1;
+	private boolean venomShareRequested;
 	private final Map<Integer, Integer> freshVenomDelays = new HashMap<>();
 	private long dynamiteUseTick = -1;
 	private int measuredDynamiteDelay = -1;
@@ -244,6 +250,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			respawnWatchLostTick = tick;
 		}
 		venomRing.onTick(tick);
+		shareActiveVenom();
 		shareTimer();
 	}
 
@@ -356,29 +363,83 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 
 	void applyVenomUpdate(NpcHealthRegenVenomUpdate update)
 	{
+		applyVenomUpdate(update, System.currentTimeMillis());
+	}
+
+	void applyVenomUpdate(NpcHealthRegenVenomUpdate update, long nowMillis)
+	{
 		PartyMember local = partyService.getLocalMember();
-		if (!config.useSharedTimers() || !config.showVenomRing() || targetNpcId < 0 || local == null
+		if (!config.useSharedTimers() || !config.showVenomRing() || targetNpcId < 0 || awayMillis >= 0 || local == null
 			|| local.getMemberId() == update.getMemberId()
-			|| update.getWorld() != targetWorld
-			|| update.getNpcId() != targetNpcId || update.getNpcIndex() != targetNpcIndex)
+			|| update.getWorld() != client.getWorld() || update.getWorld() != targetWorld
+			|| update.getNpcId() != targetNpcId || update.getNpcIndex() != targetNpcIndex
+			|| timer.getState() == RegenTimer.State.WAITING_FOR_RESPAWN)
 		{
 			return;
 		}
 
+		if (update.getSentAtMillis() < 0 || update.getSentAtMillis() - nowMillis > 600)
+		{
+			return;
+		}
+		if (update.getMemberId() == venomSourceMemberId && update.getSentAtMillis() > 0
+			&& update.getSentAtMillis() < lastVenomMessageMillis)
+		{
+			return;
+		}
 		if (update.isCancelled())
 		{
-			if (venomRing.isShared())
+			if (venomRing.isShared() && update.getMemberId() == venomSourceMemberId)
 			{
+				lastVenomMessageMillis = Math.max(lastVenomMessageMillis, update.getSentAtMillis());
 				venomRing.cancel();
 			}
 			return;
 		}
 
+		if (venomRing.getStatus() == VenomRing.Status.COUNTING
+			&& (!venomRing.isShared() || update.getMemberId() != venomSourceMemberId))
+		{
+			return;
+		}
+		long firstDelay = (long) update.getProcEarliestOffset() - update.getAppliedOffset();
+		long lastDelay = (long) update.getProcLatestOffset() - update.getAppliedOffset();
+		if (update.getAppliedOffset() > 0 || firstDelay < 0 || lastDelay < firstDelay
+			|| lastDelay > VenomRing.TIMER_TICKS + 3)
+		{
+			return;
+		}
+
+		// Older messages have no timestamp. Keep their one-tick uncertainty, but
+		// compensate for measured delivery/queue time when the sender supplies one.
+		long ageTicks = update.getSentAtMillis() == 0 ? 0
+			: Math.max(0, nowMillis - update.getSentAtMillis()) / 600;
+		long baseTick = tick - ageTicks;
+		if (update.getProcLatestOffset() - ageTicks + PARTY_LATENCY_TICKS < 0
+			|| (venomRing.getStatus() != VenomRing.Status.COUNTING && venomRing.isNpcPoisoned(tick)))
+		{
+			// Do not resurrect a countdown after its damage was already observed.
+			return;
+		}
 		venomRing.startShared(
-			tick + update.getAppliedOffset(),
-			tick + update.getProcEarliestOffset() - PARTY_LATENCY_TICKS,
-			tick + update.getProcLatestOffset() + PARTY_LATENCY_TICKS,
-			update.isFullHpKnown() ? tick + update.getFullHpOffset() + PARTY_LATENCY_TICKS : -1);
+			baseTick + update.getAppliedOffset(),
+			baseTick + update.getProcEarliestOffset() - PARTY_LATENCY_TICKS,
+			baseTick + update.getProcLatestOffset() + PARTY_LATENCY_TICKS,
+			update.isFullHpKnown() ? baseTick + update.getFullHpOffset() + PARTY_LATENCY_TICKS : -1);
+		venomSourceMemberId = update.getMemberId();
+		lastVenomMessageMillis = update.getSentAtMillis();
+	}
+
+	/** Refresh only our own countdown, so late selections catch up without party echoing. */
+	private void shareActiveVenom()
+	{
+		if (target != null && awayMillis < 0 && !venomRing.isShared()
+			&& venomRing.getStatus() == VenomRing.Status.COUNTING
+			&& (venomShareRequested || lastVenomSharedTick < 0
+				|| tick - lastVenomSharedTick >= VENOM_SHARE_INTERVAL_TICKS))
+		{
+			shareVenom(false);
+		}
 	}
 
 	private void shareVenom(boolean cancelled)
@@ -393,7 +454,9 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			(int) (venomRing.getAppliedTick() - tick),
 			(int) (venomRing.getProcEarliest() - tick),
 			(int) (venomRing.getProcLatest() - tick),
-			fullHp >= 0, fullHp >= 0 ? (int) (fullHp - tick) : 0));
+			fullHp >= 0, fullHp >= 0 ? (int) (fullHp - tick) : 0, System.currentTimeMillis()));
+		lastVenomSharedTick = tick;
+		venomShareRequested = false;
 	}
 
 	@Subscribe
@@ -401,6 +464,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	{
 		// Bring a newly joined member up to date on the next tick.
 		shareRequested = true;
+		venomShareRequested = true;
 	}
 
 	@Subscribe
@@ -408,6 +472,13 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	{
 		lastSharedKey = null;
 		shareRequested = true;
+		venomShareRequested = true;
+		if (venomRing.isShared())
+		{
+			venomRing.cancel();
+		}
+		venomSourceMemberId = -1;
+		lastVenomMessageMillis = 0;
 	}
 
 	@Subscribe
@@ -574,6 +645,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		if (hitsplat != null && hitsplat.getAmount() > 0)
 		{
 			timer.invalidateInspectionHealth();
+			inspectionHealthInvalidated = true;
 		}
 		processHealthSample(npc);
 	}
@@ -619,6 +691,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		if (config.showVenomRing() && setup != null && setup.isGuaranteed()
 			&& venomRing.start(tick, fullHpTickAfterHit(hitsplat.getAmount())))
 		{
+			venomSourceMemberId = -1;
+			lastVenomMessageMillis = 0;
 			shareVenom(false);
 		}
 	}
@@ -681,6 +755,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			if (healthScale == lastHealthScale && healthRatio < lastHealthRatio)
 			{
 				timer.invalidateInspectionHealth();
+				inspectionHealthInvalidated = true;
 			}
 			if (healthRatio != lastHealthRatio || healthScale != lastHealthScale
 				|| lastHealthSampleTick < 0)
@@ -741,6 +816,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		inspectionBeforeCast = null;
 
 		lastInspectedHitpoints = snapshot.getHitpoints();
+		inspectionHealthInvalidated = false;
 		lastInspectedDefence = snapshot.getDefence();
 		if (lastInspectedDefence >= 0)
 		{
@@ -991,6 +1067,9 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		// How long dynamite takes to land depends on the distance to this NPC.
 		measuredDynamiteDelay = -1;
 		venomRing.reset();
+		venomSourceMemberId = -1;
+		lastVenomMessageMillis = 0;
+		lastVenomSharedTick = -1;
 		venomRing.setFreshDelay(freshVenomDelays.getOrDefault(npc.getId(), VenomRing.TIMER_TICKS));
 		timer.reset();
 		resetObservationSource();
@@ -1100,6 +1179,9 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		dynamiteUseTick = -1;
 		measuredDynamiteDelay = -1;
 		venomRing.reset();
+		venomSourceMemberId = -1;
+		lastVenomMessageMillis = 0;
+		lastVenomSharedTick = -1;
 		activeRegenTicks = config == null ? 100 : config.regenTicks();
 		activeRespawnTicks = 0;
 		learnedRegen = false;
@@ -1170,6 +1252,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		inspectionSampleTick = -1;
 		inspectionDeadlineTick = -1;
 		lastInspectedHitpoints = -1;
+		inspectionHealthInvalidated = false;
 		lastInspectedDefence = -1;
 		lastInspectedTick = -1;
 		lastHealthRatio = -1;
@@ -1214,12 +1297,16 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 
 	private boolean isInspectionHealthCurrent()
 	{
-		return lastInspectedHitpoints >= 0
+		return !inspectionHealthInvalidated && lastInspectedHitpoints >= 0
 			&& (lastHealthSampleTick < 0 || lastInspectedTick >= lastHealthSampleTick);
 	}
 
 	RecoveryCalculator.Range getDefenceAtFullHitpoints()
 	{
+		if (inspectionHealthInvalidated)
+		{
+			return null;
+		}
 		return RecoveryCalculator.defenceAtFull(
 			lastInspectedDefence, baseDefence,
 			lastInspectedHitpoints < 0 ? null
