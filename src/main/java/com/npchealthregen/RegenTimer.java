@@ -229,7 +229,10 @@ final class RegenTimer
 		}
 		long previousStart = windowStartTick;
 		long previousEnd = windowEndTick;
-		int learned = sampleExactStats(hp, defence, earliestTick, resultTick, preferredInterval);
+		// Capped HP does not reveal how many heals occurred or when the last
+		// one happened. Defence can still provide independent regen evidence.
+		int healthSample = maximumHp > 0 && hp >= maximumHp ? -1 : hp;
+		int learned = sampleExactStats(healthSample, defence, earliestTick, resultTick, preferredInterval);
 		int interval = learned > 0 ? learned : preferredInterval;
 		long[] phase = inspectionPhase.sample(hp, maximumHp, earliestTick, resultTick, interval);
 		if (phase != null)
@@ -549,6 +552,16 @@ final class RegenTimer
 	 */
 	void markUnverified()
 	{
+		// Samples on either side of an observation gap cannot establish a heal:
+		// an unseen death, respawn or damage may have changed these stats.
+		inspectionPhase.reset();
+		lastExactHitpoints = -1;
+		lastExactSampleTick = -1;
+		lastExactDefence = -1;
+		lastDefenceSampleTick = -1;
+		lastHealthRatio = -1;
+		lastHealthScale = -1;
+		lastHealthSampleTick = -1;
 		if (windowStartTick >= 0)
 		{
 			unverified = true;

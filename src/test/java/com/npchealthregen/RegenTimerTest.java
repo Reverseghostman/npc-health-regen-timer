@@ -10,6 +10,55 @@ import static org.junit.Assert.assertNull;
 public class RegenTimerTest
 {
 	@Test
+	public void fullHealthInspectionPreservesSharedPhase()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.applySharedWindow(50, 52, 100);
+		timer.sampleInspectionStats(90, -1, 100, 60, 63, 100);
+		timer.sampleInspectionStats(100, -1, 100, 260, 263, 100);
+		assertEquals(0, timer.getObservedRegens());
+		assertTrue(timer.isPhaseFromParty());
+		assertEquals(350, timer.getUpcomingWindowTicks(263, 100)[0]);
+		assertEquals(352, timer.getUpcomingWindowTicks(263, 100)[1]);
+	}
+
+	@Test
+	public void firstInspectionAfterObservationGapCannotOverridePartyCorrection()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleInspectionStats(50, 50, 200, 0, 0, 100);
+		timer.sampleInspectionStats(51, 50, 200, 60, 60, 100);
+		timer.markUnverified();
+		assertTrue(timer.applySharedWindow(175, 177, 100));
+		timer.sampleInspectionStats(80, 60, 200, 240, 243, 100);
+		assertTrue(timer.isPhaseFromParty());
+		assertEquals(275, timer.getUpcomingWindowTicks(243, 100)[0]);
+		assertEquals(277, timer.getUpcomingWindowTicks(243, 100)[1]);
+		assertFalse(timer.isUnverified());
+	}
+
+	@Test
+	public void observationGapBeforeFirstHealClearsExactSamples()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleInspectionStats(50, 50, 200, 0, 0, 100);
+		timer.markUnverified();
+		timer.sampleInspectionStats(80, 60, 200, 240, 243, 100);
+		assertEquals(RegenTimer.State.OBSERVING, timer.getState());
+		assertEquals(0, timer.getObservedRegens());
+	}
+
+	@Test
+	public void fullHealthStillAllowsDefenceRegenEvidence()
+	{
+		RegenTimer timer = new RegenTimer();
+		timer.sampleInspectionStats(100, 50, 100, 0, 0, 100);
+		timer.sampleInspectionStats(100, 51, 100, 60, 60, 100);
+		assertEquals(1, timer.getObservedRegens());
+		assertEquals(RegenTimer.State.TRACKING, timer.getState());
+	}
+
+	@Test
 	public void changedHealthBarScaleDoesNotLookLikeHealing()
 	{
 		RegenTimer timer = new RegenTimer();
