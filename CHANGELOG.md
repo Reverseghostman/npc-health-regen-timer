@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.11
+
+- Preserve the shared regen phase when inspecting an NPC at full HP; capped HP
+  cannot establish when regeneration occurred. Defence recovery still counts.
+- Clear observation samples on logout or when the NPC leaves view, so the first
+  inspection after returning cannot overwrite a party correction using stale
+  HP, Defence, or inspection history.
+
 ## 0.9.10
 
 - Compensate for party message delivery time in the shared venom countdown and
