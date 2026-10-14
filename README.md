@@ -159,8 +159,8 @@ Join the same RuneLite party (the core **Party** plugin) as your friends. When
 you each select the same NPC on the same world, your regen windows are shared
 automatically:
 
-- a member with no timer yet picks up yours straight away, including a learned
-  regen rate
+- a member with no timer yet picks up yours within five game ticks, including a
+  measured regen rate, even if they select the NPC after the first broadcast
 - a member with a rougher window is narrowed by yours when the two agree
 - your own observations always take priority: a shared window that contradicts
   them is ignored, and your first own heal takes over from a shared one
@@ -170,10 +170,15 @@ automatically:
   also happens while the NPC is out of your view, so you come back to the right
   timer. A member whose own timer is in that state does not replace yours
 
-Party members count ticks separately, so a shared window is widened by one
-tick on each side for delivery timing. The overlay shows **Timer from** with
-the member's name while you are using their timer. Updates are only sent when
-the window changes, about once per regen cycle when nothing new is seen.
+Party members count ticks separately. Updated clients use a send timestamp to
+subtract delivery time and widen the window by one tick on each side for tick
+boundary uncertainty. Both clients need the updated plugin and synchronized
+system clocks; older messages retain the one-tick margin without delay correction.
+The overlay shows **Timer from** with the member's name while you use their timer.
+Locally observed windows refresh every five ticks and immediately when they
+change. Received phases are not echoed back. Stale and out-of-order timestamped
+updates are ignored. A shared measured rate survives changes to your default
+regen setting, but is not saved as a measurement made by your own account.
 
 ## Settings
 

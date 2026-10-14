@@ -82,7 +82,7 @@ public class NpcHealthRegenPluginBehaviorTest
 	}
 
 	@Test
-	public void sharesTheWindowWithThePartyOnlyWhenItChanges() throws Exception
+	public void sharesChangesImmediatelyAndRefreshesStableWindows() throws Exception
 	{
 		joinParty(301);
 		when(config.shareWithParty()).thenReturn(true);
@@ -101,6 +101,7 @@ public class NpcHealthRegenPluginBehaviorTest
 		// Next heal at 150, sent from tick 61.
 		assertEquals(89, update.getWindowStartOffset());
 		assertEquals(89, update.getWindowEndOffset());
+		assertTrue(update.getSentAtMillis() > 0);
 
 		plugin.onGameTick(new GameTick());
 		verify(partyService, times(1)).send(any());
@@ -108,6 +109,108 @@ public class NpcHealthRegenPluginBehaviorTest
 		plugin.onUserJoin(null);
 		plugin.onGameTick(new GameTick());
 		verify(partyService, times(2)).send(any());
+		for (int i = 0; i < 4; i++)
+		{
+			plugin.onGameTick(new GameTick());
+		}
+		verify(partyService, times(2)).send(any());
+		plugin.onGameTick(new GameTick());
+		verify(partyService, times(3)).send(any());
+	}
+
+	@Test
+	public void delayedRegenMessageUsesElapsedTimeAndIndependentClientTicks() throws Exception
+	{
+		joinParty(301);
+		when(config.useSharedTimers()).thenReturn(true);
+		// Sender tick 100, heal 130. Receiver has a different epoch and five ticks elapsed.
+		set("tick", 1005L);
+		NpcHealthRegenPartyUpdate update = timedPartyUpdate(100, 30, 10_000);
+		plugin.applyPartyUpdate(update, 13_000);
+		assertArrayEquals(new long[]{1029, 1031}, plugin.getTimer().getUpcomingWindowTicks(1005, 100));
+		RegenTimer.Window window = plugin.getTimer().getUpcomingWindow(1005, 100);
+		assertEquals("Regen: ~24-26t", NpcHealthRegenSceneOverlay.formatRegenCountdown(window));
+	}
+
+	@Test
+	public void staleFutureAndInvalidTimestampedRegenUpdatesCannotChangeTheRate() throws Exception
+	{
+		joinParty(301);
+		when(config.useSharedTimers()).thenReturn(true);
+		plugin.applyPartyUpdate(timedPartyUpdate(80, 30, 1_000), 10_000);
+		plugin.applyPartyUpdate(timedPartyUpdate(80, 30, 10_601), 10_000);
+		plugin.applyPartyUpdate(timedPartyUpdate(80, 30, -1), 10_000);
+		assertEquals(100, plugin.getActiveRegenTicks());
+		assertNull(plugin.getTimer().getUpcomingWindow(0, 100));
+	}
+
+	@Test
+	public void olderOrDuplicateRegenMessagesCannotReplaceANewerRate() throws Exception
+	{
+		joinParty(301);
+		when(config.useSharedTimers()).thenReturn(true);
+		set("tick", 100L);
+		plugin.applyPartyUpdate(timedPartyUpdate(80, 30, 10_000), 10_000);
+		plugin.applyPartyUpdate(timedPartyUpdate(60, 30, 9_400), 10_000);
+		plugin.applyPartyUpdate(timedPartyUpdate(80, 30, 10_000), 10_000);
+		assertEquals(80, plugin.getActiveRegenTicks());
+	}
+
+	@Test
+	public void sharedMeasuredRateSurvivesSettingsAndIsNotSavedAsALocalMeasurement() throws Exception
+	{
+		joinParty(301);
+		when(config.useSharedTimers()).thenReturn(true);
+		plugin.applyPartyUpdate(timedPartyUpdate(80, 30, 10_000), 10_000);
+		when(config.regenTicks()).thenReturn(120);
+		ConfigChanged event = new ConfigChanged();
+		event.setGroup(NpcHealthRegenConfig.GROUP);
+		event.setKey("regenTicks");
+		plugin.onConfigChanged(event);
+		assertEquals(80, plugin.getActiveRegenTicks());
+		assertFalse(plugin.isLearnedRegen());
+		verify(profiles, never()).save(anyInt(), anyInt(), anyInt());
+		event.setKey("learnNpcTimings");
+		plugin.onConfigChanged(event);
+		assertEquals(80, plugin.getActiveRegenTicks());
+		select(npc(1, 43));
+		assertEquals(120, plugin.getActiveRegenTicks());
+	}
+
+	@Test
+	public void localMeasuredRateTakesPrecedenceOverSharedRate() throws Exception
+	{
+		joinParty(301);
+		when(config.useSharedTimers()).thenReturn(true);
+		when(profiles.load(1)).thenReturn(new NpcTimingProfileStore.Profile(90, 0));
+		select(target);
+		plugin.applyPartyUpdate(timedPartyUpdate(80, 30, 10_000), 10_000);
+		assertEquals(90, plugin.getActiveRegenTicks());
+	}
+
+	@Test
+	public void receivedRegenPhasesAreNotEchoedOrPeriodicallyRelayed() throws Exception
+	{
+		joinParty(301);
+		when(config.useSharedTimers()).thenReturn(true);
+		when(config.shareWithParty()).thenReturn(true);
+		plugin.applyPartyUpdate(timedPartyUpdate(100, 30, 10_000), 10_000);
+		for (int i = 0; i < 12; i++)
+		{
+			plugin.onGameTick(new GameTick());
+		}
+		verify(partyService, never()).send(any(NpcHealthRegenPartyUpdate.class));
+		plugin.getTimer().markNow(12, 100);
+		plugin.onGameTick(new GameTick());
+		verify(partyService).send(any(NpcHealthRegenPartyUpdate.class));
+	}
+
+	private static NpcHealthRegenPartyUpdate timedPartyUpdate(int rate, int offset, long sentAt)
+	{
+		NpcHealthRegenPartyUpdate update = new NpcHealthRegenPartyUpdate(301, 1, 42,
+			rate, true, offset, offset, false, sentAt);
+		update.setMemberId(2L);
+		return update;
 	}
 
 	@Test

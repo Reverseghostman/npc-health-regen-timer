@@ -62,6 +62,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	// A party update can arrive in the sender's tick or the next, either side of
 	// this client's own tick boundary.
 	private static final int PARTY_LATENCY_TICKS = 1;
+	private static final int REGEN_SHARE_INTERVAL_TICKS = 5;
+	private static final long MAX_REGEN_MESSAGE_AGE_MILLIS = 6000;
 	private static final int VENOM_SHARE_INTERVAL_TICKS = 5;
 	// The largest regen interval the settings allow, so no shared rate can be larger.
 	private static final int MAX_SHARED_REGEN_TICKS = 10000;
@@ -157,6 +159,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	private int activeRegenTicks = 100;
 	private int activeRespawnTicks;
 	private boolean learnedRegen;
+	private boolean sharedRegen;
+	private boolean suppressRegenEcho;
 	private boolean learnedRespawn;
 	private ObservationSource observationSource = ObservationSource.HEALTH_BAR;
 	private long inspectionSampleTick = -1;
@@ -173,6 +177,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	private int maximumHitpoints = -1;
 	private int baseDefence = -1;
 	private String lastSharedKey;
+	private long lastRegenSharedTick = -1;
+	private final Map<Long, Long> lastRegenMessageMillis = new HashMap<>();
 	private boolean shareRequested;
 	private String partySourceName;
 	private int targetWorld = -1;
@@ -267,11 +273,12 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			|| location.distanceTo2D(lastTargetPoint) > distance;
 	}
 
-	/** Sends the tracked NPC's regen window to the party whenever it changes. */
+	/** Refresh locally observed windows so already-joined late selectors can catch up. */
 	private void shareTimer()
 	{
 		if (!config.shareWithParty() || target == null
-			|| timer.getState() != RegenTimer.State.TRACKING || !partyService.isInParty()
+			|| timer.getState() != RegenTimer.State.TRACKING
+			|| (suppressRegenEcho && timer.isPhaseFromParty()) || !partyService.isInParty()
 			|| partyService.getLocalMember() == null)
 		{
 			return;
@@ -285,19 +292,20 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 
 		int world = client.getWorld();
 		boolean unverified = timer.isUnverified();
-		// The absolute window only moves when it is refined or rolls to the next
-		// cycle, so this sends at most about once per regen cycle when idle.
+		// Refresh even an unchanged window, without echoing a received phase.
 		String key = world + ":" + targetNpcId + ":" + targetNpcIndex + ":" + activeRegenTicks
-			+ ":" + window[0] + ":" + window[1] + ":" + unverified;
-		if (!shareRequested && key.equals(lastSharedKey))
+			+ ":" + window[0] + ":" + window[1] + ":" + unverified + ":" + (learnedRegen || sharedRegen);
+		if (!shareRequested && key.equals(lastSharedKey)
+			&& lastRegenSharedTick >= 0 && tick - lastRegenSharedTick < REGEN_SHARE_INTERVAL_TICKS)
 		{
 			return;
 		}
 
 		partyService.send(new NpcHealthRegenPartyUpdate(world, targetNpcId, targetNpcIndex,
-			activeRegenTicks, learnedRegen, (int) (window[0] - tick), (int) (window[1] - tick),
-			unverified));
+			activeRegenTicks, learnedRegen || sharedRegen, (int) (window[0] - tick), (int) (window[1] - tick),
+			unverified, System.currentTimeMillis()));
 		lastSharedKey = key;
+		lastRegenSharedTick = tick;
 		shareRequested = false;
 	}
 
@@ -309,6 +317,11 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	}
 
 	void applyPartyUpdate(NpcHealthRegenPartyUpdate update)
+	{
+		applyPartyUpdate(update, System.currentTimeMillis());
+	}
+
+	void applyPartyUpdate(NpcHealthRegenPartyUpdate update, long nowMillis)
 	{
 		PartyMember local = partyService.getLocalMember();
 		// Also while the NPC is out of view: a member who is watching it keeps the timer right
@@ -323,6 +336,20 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			return;
 		}
 
+		long sentAt = update.getSentAtMillis();
+		if (sentAt < 0 || sentAt > nowMillis + 600
+			|| (sentAt > 0 && (nowMillis - sentAt > MAX_REGEN_MESSAGE_AGE_MILLIS
+				|| sentAt < lastRegenMessageMillis.getOrDefault(update.getMemberId(), 0L))))
+		{
+			return;
+		}
+		long ageTicks = sentAt == 0 ? 0 : Math.max(0, nowMillis - sentAt) / 600;
+		long baseTick = tick - ageTicks;
+		if (sentAt > 0)
+		{
+			lastRegenMessageMillis.put(update.getMemberId(), sentAt);
+		}
+
 		if (update.getRegenTicks() != activeRegenTicks)
 		{
 			// Only adopt a rate the sender measured, and never over our own.
@@ -332,11 +359,16 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			}
 			activeRegenTicks = update.getRegenTicks();
 		}
+		if (!learnedRegen && update.isRegenLearned())
+		{
+			sharedRegen = true;
+		}
 
-		long start = tick + update.getWindowStartOffset() - PARTY_LATENCY_TICKS;
-		long end = tick + update.getWindowEndOffset() + PARTY_LATENCY_TICKS;
+		long start = baseTick + update.getWindowStartOffset() - PARTY_LATENCY_TICKS;
+		long end = baseTick + update.getWindowEndOffset() + PARTY_LATENCY_TICKS;
 		if (timer.applySharedWindow(start, end, activeRegenTicks, update.isUnverified()))
 		{
+			suppressRegenEcho = true;
 			PartyMember sender = partyService.getMemberById(update.getMemberId());
 			partySourceName = sender == null ? "Party member" : sender.getDisplayName();
 		}
@@ -352,7 +384,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		int regenTicks = update.getRegenTicks();
 		long width = (long) update.getWindowEndOffset() - update.getWindowStartOffset();
 		return regenTicks > 0 && regenTicks <= MAX_SHARED_REGEN_TICKS
-			&& width >= 0 && width < regenTicks;
+			&& width >= 0 && width < regenTicks
+			&& update.getWindowEndOffset() >= 0 && update.getWindowEndOffset() <= regenTicks;
 	}
 
 	@Subscribe
@@ -471,6 +504,8 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 	public void onPartyChanged(PartyChanged event)
 	{
 		lastSharedKey = null;
+		lastRegenSharedTick = -1;
+		lastRegenMessageMillis.clear();
 		shareRequested = true;
 		venomShareRequested = true;
 		if (venomRing.isShared())
@@ -841,6 +876,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			// uncertainty permits it. Do not round away an exact observation here.
 			activeRegenTicks = detectedInterval;
 			learnedRegen = true;
+			sharedRegen = false;
 			saveActiveProfile();
 		}
 		if (timer.consumeDeathPauseUpdate() && config.learnNpcTimings() && targetNpcId >= 0)
@@ -942,7 +978,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 			return;
 		}
 
-		if ("regenTicks".equals(event.getKey()) && !learnedRegen)
+		if ("regenTicks".equals(event.getKey()) && !learnedRegen && !sharedRegen)
 		{
 			activeRegenTicks = config.regenTicks();
 		}
@@ -1051,6 +1087,11 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 
 	private void selectTarget(NPC npc)
 	{
+		suppressRegenEcho = false;
+		sharedRegen = false;
+		lastSharedKey = null;
+		lastRegenSharedTick = -1;
+		lastRegenMessageMillis.clear();
 		target = npc;
 		targetNpcId = npc.getId();
 		targetNpcIndex = npc.getIndex();
@@ -1096,6 +1137,7 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		resetObservationSource();
 		activeRegenTicks = config.regenTicks();
 		learnedRegen = false;
+		sharedRegen = false;
 		// Clear only this NPC type's regen rate; retain its respawn measurement. With learning off
 		// the saved profile was not loaded, so read the measurement back rather than erase it.
 		int savedRespawnTicks = learnedRespawn
@@ -1110,7 +1152,15 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		int storedRegenTicks = profile.getRegenTicks();
 		learnedRegen = storedRegenTicks > 0;
 		learnedRespawn = profile.getRespawnTicks() > 0;
-		activeRegenTicks = learnedRegen ? storedRegenTicks : config.regenTicks();
+		if (learnedRegen)
+		{
+			activeRegenTicks = storedRegenTicks;
+			sharedRegen = false;
+		}
+		else if (!sharedRegen)
+		{
+			activeRegenTicks = config.regenTicks();
+		}
 		activeRespawnTicks = learnedRespawn ? profile.getRespawnTicks() : config.respawnTicks();
 		timer.updateExpectedRespawnTicks(activeRespawnTicks);
 
@@ -1145,6 +1195,9 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 		}
 
 		deathHandled = true;
+		// A locally observed death/respawn moves the phase. Share that new evidence even
+		// when the original calibration came from a party member who missed the death.
+		suppressRegenEcho = false;
 		this.deathTickReliable = deathTickReliable;
 		respawnWatchLostTick = -1;
 		target = null;
@@ -1165,6 +1218,11 @@ public class NpcHealthRegenPlugin extends Plugin implements KeyListener
 
 	private void clearTarget()
 	{
+		suppressRegenEcho = false;
+		sharedRegen = false;
+		lastSharedKey = null;
+		lastRegenSharedTick = -1;
+		lastRegenMessageMillis.clear();
 		target = null;
 		targetNpcId = -1;
 		targetNpcIndex = -1;

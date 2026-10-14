@@ -235,7 +235,8 @@ public class PartyReturnTest
 						{
 							if (to != from)
 							{
-								to.plugin.applyPartyUpdate(update);
+								// Virtual ticks advance without wall-clock sleeps.
+								to.plugin.applyPartyUpdate(update, update.getSentAtMillis());
 							}
 						}
 					}
@@ -265,6 +266,26 @@ public class PartyReturnTest
 		a.markHeal();
 		run(5);
 		assertAgree(a, b);
+	}
+
+	@Test
+	public void lateSelectionReceivesARegenRefreshWithoutAccumulatingUncertainty() throws Exception
+	{
+		Member source = join(1, 100);
+		Member receiver = join(2, 700);
+		source.select();
+		source.markHeal();
+		run(3);
+		receiver.select();
+		run(3);
+		long[] own = source.plugin.getTimer().getUpcomingWindowTicks(source.plugin.getTick(), REGEN);
+		long[] shared = receiver.plugin.getTimer().getUpcomingWindowTicks(receiver.plugin.getTick(), REGEN);
+		assertEquals(own[0] + 599, shared[0]);
+		assertEquals(own[1] + 601, shared[1]);
+		run(20);
+		shared = receiver.plugin.getTimer().getUpcomingWindowTicks(receiver.plugin.getTick(), REGEN);
+		assertEquals(own[0] + 599, shared[0]);
+		assertEquals(own[1] + 601, shared[1]);
 	}
 
 	@Test

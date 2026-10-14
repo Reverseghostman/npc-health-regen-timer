@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.12
+
+- Correct shared regen deadlines for delivery and client-thread queue delays,
+  while keeping compatibility with older party messages.
+- Refresh locally observed regen windows every five ticks so already-joined
+  members who select the NPC late can catch up. Do not echo received phases.
+- Reject stale, future-dated, out-of-order and impossible regen messages.
+- Retain shared measured regen rates across local default-setting changes without
+  saving them as local measurements. Local measured rates still take priority.
+- Add delayed-delivery, refresh, message-ordering, compatibility and rate-provenance
+  regression coverage.
+
 ## 0.9.11
 
 - Preserve the shared regen phase when inspecting an NPC at full HP; capped HP

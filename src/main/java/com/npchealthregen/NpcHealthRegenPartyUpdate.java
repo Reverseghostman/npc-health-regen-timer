@@ -26,4 +26,27 @@ public class NpcHealthRegenPartyUpdate extends PartyMemberMessage
 	int windowStartOffset;
 	int windowEndOffset;
 	boolean unverified;
+	// Zero in messages from older versions. Used to account for delivery and client-thread delay.
+	long sentAtMillis;
+
+	public NpcHealthRegenPartyUpdate(int world, int npcId, int npcIndex, int regenTicks,
+		boolean regenLearned, int windowStartOffset, int windowEndOffset, boolean unverified)
+	{
+		this(world, npcId, npcIndex, regenTicks, regenLearned, windowStartOffset, windowEndOffset,
+			unverified, 0);
+	}
+
+	public NpcHealthRegenPartyUpdate(int world, int npcId, int npcIndex, int regenTicks,
+		boolean regenLearned, int windowStartOffset, int windowEndOffset, boolean unverified, long sentAtMillis)
+	{
+		this.world = world;
+		this.npcId = npcId;
+		this.npcIndex = npcIndex;
+		this.regenTicks = regenTicks;
+		this.regenLearned = regenLearned;
+		this.windowStartOffset = windowStartOffset;
+		this.windowEndOffset = windowEndOffset;
+		this.unverified = unverified;
+		this.sentAtMillis = sentAtMillis;
+	}
 }

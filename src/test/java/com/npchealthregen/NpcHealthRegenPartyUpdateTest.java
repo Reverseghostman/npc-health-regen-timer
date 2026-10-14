@@ -12,7 +12,7 @@ public class NpcHealthRegenPartyUpdateTest
 	@Test
 	public void survivesTheJsonRoundTripThePartyServiceUses()
 	{
-		NpcHealthRegenPartyUpdate update = new NpcHealthRegenPartyUpdate(301, 1, 42, 100, true, -3, 5, true);
+		NpcHealthRegenPartyUpdate update = new NpcHealthRegenPartyUpdate(301, 1, 42, 100, true, -3, 5, true, 123456L);
 		update.setMemberId(7L);
 		Gson gson = new Gson();
 
@@ -30,6 +30,7 @@ public class NpcHealthRegenPartyUpdateTest
 		assertEquals(-3, received.getWindowStartOffset());
 		assertEquals(5, received.getWindowEndOffset());
 		assertTrue(received.isUnverified());
+		assertEquals(123456L, received.getSentAtMillis());
 	}
 
 	@Test
@@ -41,6 +42,7 @@ public class NpcHealthRegenPartyUpdateTest
 		NpcHealthRegenPartyUpdate received = new Gson().fromJson(json, NpcHealthRegenPartyUpdate.class);
 
 		assertFalse(received.isUnverified());
+		assertEquals(0L, received.getSentAtMillis());
 		assertEquals(5, received.getWindowEndOffset());
 	}
 }
